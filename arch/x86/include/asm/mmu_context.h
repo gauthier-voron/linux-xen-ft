@@ -3,6 +3,9 @@
 
 #include <asm/desc.h>
 #include <linux/atomic.h>
+/* JRF */
+#include <linux/replicate.h>
+
 #include <asm/pgalloc.h>
 #include <asm/tlbflush.h>
 #include <asm/paravirt.h>
@@ -36,14 +39,24 @@ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
 	unsigned cpu = smp_processor_id();
 
 	if (likely(prev != next)) {
+      pgd_t *pgd;
 #ifdef CONFIG_SMP
 		this_cpu_write(cpu_tlbstate.state, TLBSTATE_OK);
 		this_cpu_write(cpu_tlbstate.active_mm, next);
 #endif
 		cpumask_set_cpu(cpu, mm_cpumask(next));
 
+      /* JRF */
+      if(is_replicated(next)) {
+         pgd = next->pgd_node[cpu_to_node(cpu)];
+         //DEBUG_PRINT("Active ctx switch: using pgd_node: %p, node %i\n", pgd, cpu_to_node(cpu));
+		}
+      else {
+         pgd = next->pgd_master;
+      }
+
 		/* Re-load page tables */
-		load_cr3(next->pgd);
+		load_cr3(pgd);
 
 		/* stop flush ipis for the previous mm */
 		cpumask_clear_cpu(cpu, mm_cpumask(prev));
@@ -64,7 +77,19 @@ static inline void switch_mm(struct mm_struct *prev, struct mm_struct *next,
 			 * tlb flush IPI delivery. We must reload CR3
 			 * to make sure to use no freed page tables.
 			 */
-			load_cr3(next->pgd);
+         pgd_t * pgd;
+
+         /* JRF */
+         if(is_replicated(next)) {
+            pgd = next->pgd_node[cpu_to_node(cpu)];
+            //DEBUG_PRINT("Active ctx switch: using pgd_node: %p, node %i\n", pgd, cpu_to_node(cpu));
+         }
+         else {
+            pgd = next->pgd_master;
+         }
+
+			load_cr3(pgd);
+
 			load_LDT_nolock(&next->context);
 		}
 	}

@@ -28,6 +28,8 @@
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
 
+#include <linux/replicate.h>
+
 #ifndef pgprot_modify
 static inline pgprot_t pgprot_modify(pgprot_t oldprot, pgprot_t newprot)
 {
@@ -47,12 +49,21 @@ static unsigned long change_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 	int last_nid = -1;
 
 	pte = pte_offset_map_lock(mm, pmd, addr, &ptl);
+
 	arch_enter_lazy_mmu_mode();
 	do {
 		oldpte = *pte;
 		if (pte_present(oldpte)) {
 			pte_t ptent;
 			bool updated = false;
+
+         struct page * page = pte_page(*pte);
+
+         if(page && PageReplication(page)) {
+            // Revert replication before changing the protection
+            struct vm_area_struct * vma = find_vma(mm, addr);
+            find_and_revert_replication(mm, vma, addr, pte);
+         }
 
 			ptent = ptep_modify_prot_start(mm, addr, pte);
 			if (!prot_numa) {

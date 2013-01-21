@@ -6143,6 +6143,10 @@ static const struct trace_print_flags pageflag_names[] = {
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 	{1UL << PG_compound_lock,	"compound_lock"	},
 #endif
+   {1UL << PG_replication, "replication"           },
+   {1UL << PG_collapsed,   "replication-collapsed" },
+   {1UL << PG_pingpong,    "replication-pingpong"  },
+
 };
 
 static void dump_page_flags(unsigned long flags)

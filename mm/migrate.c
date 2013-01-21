@@ -42,6 +42,10 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/migrate.h>
 
+#include <linux/replicate.h>
+#include <linux/mmu_notifier.h>
+
+
 #include "internal.h"
 
 /*
@@ -689,10 +693,22 @@ static int move_to_new_page(struct page *newpage, struct page *page,
 
 	if (rc != MIGRATEPAGE_SUCCESS) {
 		newpage->mapping = NULL;
+      memset(&newpage->stats, 0, sizeof(perpage_stats_t));
 	} else {
+
 		if (remap_swapcache)
 			remove_migration_ptes(page, newpage);
 		page->mapping = NULL;
+
+
+      /** The migration was successful **/
+#if ENABLE_MIGRATION_STATS
+      newpage->stats.nr_migrations++;
+
+      /*if(newpage->stats.nr_migrations > 1) {
+         printk("Page %p has been migrated %lu times\n", page_address(newpage), (unsigned long) newpage->stats.nr_migrations);
+      }*/
+#endif
 	}
 
 	unlock_page(newpage);
@@ -818,6 +834,9 @@ static int __unmap_and_move(struct page *page, struct page *newpage,
 		}
 		goto skip_unmap;
 	}
+
+   /** Makes sure that stats will be synchronized **/
+   newpage->stats = page->stats;
 
 	/* Establish migration ptes or remove ptes */
 	try_to_unmap(page, TTU_MIGRATION|TTU_IGNORE_MLOCK|TTU_IGNORE_ACCESS);
@@ -1019,6 +1038,7 @@ int migrate_pages(struct list_head *from, new_page_t get_new_page,
 				break;
 			case MIGRATEPAGE_SUCCESS:
 				nr_succeeded++;
+            INCR_REP_STAT_VALUE(nr_migrations, 1);
 				break;
 			default:
 				/* Permanent failure */
@@ -1136,6 +1156,11 @@ static int do_move_page_to_node_array(struct mm_struct *mm,
 		/* Use PageReserved to check for zero page */
 		if (PageReserved(page))
 			goto put_and_set;
+
+      /* Don't want to migrate a replicated page */
+      if (PageReplication(page)) {
+         goto put_and_set;
+      }
 
 		pp->page = page;
 		err = page_to_nid(page);

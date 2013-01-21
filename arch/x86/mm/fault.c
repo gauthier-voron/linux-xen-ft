@@ -14,6 +14,12 @@
 #include <linux/hugetlb.h>		/* hstate_index_to_shift	*/
 #include <linux/prefetch.h>		/* prefetchw			*/
 
+/* JRF */
+#include <linux/page-flags.h>
+#include <linux/replicate.h>
+#include <linux/mmu_notifier.h>
+#include <asm/mmu_context.h>
+
 #include <asm/traps.h>			/* dotraplinkage, ...		*/
 #include <asm/pgalloc.h>		/* pgd_*(), ...			*/
 #include <asm/kmemcheck.h>		/* kmemcheck_*(), ...		*/
@@ -797,6 +803,10 @@ __bad_area(struct pt_regs *regs, unsigned long error_code,
 static noinline void
 bad_area(struct pt_regs *regs, unsigned long error_code, unsigned long address)
 {
+   if(is_replicated(current->mm)){
+      printk(KERN_DEBUG "Bad area detected\n");
+   }
+
 	__bad_area(regs, error_code, address, SEGV_MAPERR);
 }
 
@@ -923,7 +933,7 @@ spurious_fault(unsigned long error_code, unsigned long address)
 	if (error_code & (PF_USER | PF_RSVD))
 		return 0;
 
-	pgd = init_mm.pgd + pgd_index(address);
+	pgd = init_mm.pgd_master + pgd_index(address);
 	if (!pgd_present(*pgd))
 		return 0;
 
@@ -998,6 +1008,158 @@ static inline bool smap_violation(int error_code, struct pt_regs *regs)
 	return true;
 }
 
+/* FGAUD */
+#define BUF_LGTH 512
+static inline void dump_pte (pgd_t * pgd, struct vm_area_struct * vma, unsigned long addr) {
+   pte_t * pte = get_pte_from_va (pgd, addr);
+
+   if(pte) {
+      struct page * page = vm_normal_page(vma, addr, *pte);
+      if(page) {
+         printk("\t0x%lx", (long unsigned) page_address(page));
+         if(PageReplication(page)) {
+            printk(" <Replicated>");
+         }
+         if(PageCollapsed(page)) {
+            printk(" <Collapsed>");
+         }
+         if(PagePingPong(page)){
+            printk(" <PingPong>");
+         }
+
+      }
+      if(pte_special(*pte)) {
+         printk(" <SPECIAL>");
+      }
+
+      if((pte_flags(*pte) & _PAGE_PROTNONE)) {
+         printk(" <!RW>");
+      }
+      else if (! pte_write(*pte)) {
+         printk(" <!WRITE>");
+      }
+   }
+   printk("\n");
+}
+
+void print_pg_fault (unsigned long address, int write, struct vm_area_struct* vma) {
+   pgd_t * pgd = __va(read_cr3());
+   int current_node = cpu_to_node(smp_processor_id());
+   int is_replicated = 0;
+
+   unsigned long vma_start = 0, vma_end = 0, vma_nr_pages = 0;
+   char vma_type[BUF_LGTH] = "";
+
+   char comm[TASK_COMM_LEN];
+   memset(comm, 0, TASK_COMM_LEN);
+   get_task_comm(comm, current);
+
+   if(current->mm && is_replicated(current->mm)) {
+      is_replicated = 1;
+   }
+
+   if(vma) {
+      vma_start = vma->vm_start;
+      vma_end = vma->vm_end;
+      vma_nr_pages = (vma->vm_end - vma->vm_start) / PAGE_SIZE;
+
+      if(vma->vm_file){
+         char * path = d_path(&vma->vm_file->f_path, vma_type, BUF_LGTH);
+         if (IS_ERR(path)) {
+            sprintf(vma_type, "UNKNOWN");
+         }
+      }
+      else {
+         if (vma->vm_start <= current->mm->brk && vma->vm_end >= current->mm->start_brk) {
+            sprintf(vma_type, "heap");
+         } else if (vma->vm_start <= current->mm->start_stack && vma->vm_end >= current->mm->start_stack) {
+            sprintf(vma_type, "stack");
+         }
+      }
+   }
+
+
+   printk(
+         "\n--- Core %d ---\n"
+         "Address : 0x%lx\n"
+         "Page fault on page = 0x%lx.\n"
+         "vma = [0x%lx ; 0x%lx[ , size: %lu pages [ %s ]\n"
+         "pgd = %p%s\n"
+         "currently defined node = %d\n"
+         "pid = %d\n"
+         "tgid = %d\n"
+         "name = %s\n"
+         "type = %s\n"
+         "MM has%sbeen replicated\n",
+         smp_processor_id(),
+         address,
+         page_va(address),
+         vma_start, vma_end, vma_nr_pages, vma_type,
+         pgd, (is_replicated && (pgd != current->mm->pgd_node[current_node])) ? " [SWITCH REQUIRED]" : "",
+         current_node, current->pid, current->tgid, comm,
+         write == -1 ? "" : (write ? "write" : "read"),
+         is_replicated ? " " : " not "
+         );
+
+   if(is_replicated && vma && vma->vm_start <= address) {
+      int node;
+
+      printk("Master : ");
+      dump_pte(current->mm->pgd_master, vma, address);
+      for_each_online_node(node) {
+         printk("Node %d : ", node);
+         dump_pte(current->mm->pgd_node[node], vma, address);
+      }
+   }
+
+   printk("-----------------\n");
+}
+
+/*
+ * This routine handles page faults.  It determines the address,
+ * and the problem, and then passes it off to one of the appropriate
+ * routines.
+ */
+
+#if WITH_SANITY_CHECKS
+DEFINE_PER_CPU(unsigned long, last_addr);
+DEFINE_PER_CPU(unsigned long, how_many_times);
+
+static inline int check_addr_spin(unsigned long address, int write, struct vm_area_struct * vma) {
+   unsigned long *laddr, *hmt;
+   unsigned int bug = 0;
+
+   laddr = get_cpu_ptr(&last_addr);
+   hmt = get_cpu_ptr(&how_many_times);
+
+   if(*laddr == address) {
+      (*hmt)++;
+
+      if(*hmt == 100) {
+         bug = 1;
+      }
+   }
+   else {
+      *hmt = 1;
+      *laddr = address;
+   }
+   put_cpu_ptr(&last_addr);
+   put_cpu_ptr(&how_many_times);
+
+   if(unlikely(bug)){
+      down_read(&current->mm->mmap_sem);
+      DEBUG_WARNING("Probable indefinite loop detected !\n");
+
+      print_pg_fault (address, write, vma);
+      check_pgd_consistency(current->mm);
+      up_read(&current->mm->mmap_sem);
+
+      return 1;
+   }
+   return 0;
+}
+#endif
+
 /*
  * This routine handles page faults.  It determines the address,
  * and the problem, and then passes it off to one of the appropriate
@@ -1006,7 +1168,7 @@ static inline bool smap_violation(int error_code, struct pt_regs *regs)
 static void __kprobes
 __do_page_fault(struct pt_regs *regs, unsigned long error_code)
 {
-	struct vm_area_struct *vma;
+	struct vm_area_struct *vma = NULL;
 	struct task_struct *tsk;
 	unsigned long address;
 	struct mm_struct *mm;
@@ -1014,6 +1176,8 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	int write = error_code & PF_WRITE;
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE |
 					(write ? FAULT_FLAG_WRITE : 0);
+
+   RECORD_DURATION_START;
 
 	tsk = current;
 	mm = tsk->mm;
@@ -1065,6 +1229,13 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code)
 		 * Don't take the mm semaphore here. If we fixup a prefetch
 		 * fault we could otherwise deadlock:
 		 */
+
+      /** Commented because it could be very misleading **/
+      /*if(is_replicated(mm)) {
+         DEBUG_WARNING("Calling bad_area_nosemaphore. That's bad ;)\n");
+         print_pg_fault(address, write, vma);
+      }*/
+
 		bad_area_nosemaphore(regs, error_code, address);
 
 		return;
@@ -1105,6 +1276,10 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	 * in an atomic region then we must not take the fault:
 	 */
 	if (unlikely(in_atomic() || !mm)) {
+      if(is_replicated(mm)) {
+         DEBUG_WARNING("Calling bad_area_nosemaphore. That's bad ;)\n");
+         print_pg_fault(address, write, vma);
+      }
 		bad_area_nosemaphore(regs, error_code, address);
 		return;
 	}
@@ -1128,6 +1303,10 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	if (unlikely(!down_read_trylock(&mm->mmap_sem))) {
 		if ((error_code & PF_USER) == 0 &&
 		    !search_exception_tables(regs->ip)) {
+         if(is_replicated(mm)) {
+            DEBUG_WARNING("Calling bad_area_nosemaphore. That's bad ;)\n");
+            print_pg_fault(address, write, vma);
+         }
 			bad_area_nosemaphore(regs, error_code, address);
 			return;
 		}
@@ -1144,12 +1323,22 @@ retry:
 
 	vma = find_vma(mm, address);
 	if (unlikely(!vma)) {
+      if(is_replicated(mm)){
+         print_pg_fault(address, write, vma);
+         DEBUG_WARNING("I did not find a VMA, what am I supposed to do ?\n");
+      }
+
 		bad_area(regs, error_code, address);
 		return;
 	}
 	if (likely(vma->vm_start <= address))
 		goto good_area;
 	if (unlikely(!(vma->vm_flags & VM_GROWSDOWN))) {
+      if(is_replicated(mm)){
+         print_pg_fault(address, write, vma);
+         DEBUG_WARNING("The VMA has not the flag VM_GROWSDOWN. Amazing!");
+      }
+
 		bad_area(regs, error_code, address);
 		return;
 	}
@@ -1177,8 +1366,381 @@ retry:
 good_area:
 	if (unlikely(access_error(error_code, vma))) {
 		bad_area_access_error(regs, error_code, address);
+      RECORD_DURATION_END(time_spent_in_pgfault_handler, nr_pgfault);
 		return;
 	}
+
+   if(is_replicated(current->mm)) {
+      pgd_t *cur_pgd, *node_pgd;
+      int node = cpu_to_node(smp_processor_id());
+
+#if WITH_SANITY_CHECKS
+      if(node < 0 || node >= num_online_nodes()) {
+         up_read(&mm->mmap_sem);
+         DEBUG_PANIC("node is invalid!\n");
+      }
+#endif
+
+      cur_pgd = (pgd_t*) __va(read_cr3());
+      node_pgd = mm->pgd_node[node];
+
+      if(cur_pgd != node_pgd) {
+         DEBUG_PGFAULT("cur_pgd: %p node_pgd: %p\n", cur_pgd, node_pgd);
+         up_read(&mm->mmap_sem);
+         load_cr3(mm->pgd_node[node]);
+         DEBUG_PGFAULT("pgd was changed, retrying fault\n");
+         return;
+      }
+   }
+
+	/* JRF */
+	/* No-privilege pages are implemented by clearing the present bit
+	 * so PF_PROT will not be set in the case of lazy copying
+	 * TODO: need to lock replicate pages in memory or check pte_present */
+   if(is_replicated(current->mm)) {
+      struct page * my_page = NULL, * master_page = NULL;
+      pte_t *my_pte, *master_pte;
+
+      spinlock_t *ptl = NULL;
+      int node = cpu_to_node(smp_processor_id());
+      int fail = 0;
+
+      pgd_t * current_pgd = mm->pgd_node[node];
+
+#if WITH_SANITY_CHECKS
+      if(node < 0 || node >= num_online_nodes()) {
+         up_read(&mm->mmap_sem);
+         DEBUG_PANIC("node is invalid!\n");
+      }
+#endif
+
+      /* handle_mm_fault does this so... */
+      __set_current_state(TASK_RUNNING);
+
+      master_pte = get_locked_pte_from_va (mm->pgd_master, current->mm, address, &ptl);
+      if(master_pte) {
+         master_page = pte_page(*master_pte);
+      }
+
+      if(master_page && PageReplication(master_page)) { // --> is replicated
+         DEBUG_PGFAULT("Received a %s page fault on a replicated page (node of mm = %d)\n", write ? "write" : "read", node);
+         my_pte = get_pte_from_va (current_pgd, address);
+
+         /** Check that nothing has changed in the mean time (e.g., a revert replication)**/
+         if(my_pte) {
+            my_page = pte_page(*my_pte);
+         }
+
+         if(unlikely(!my_page)) {
+            pte_unmap_unlock(master_pte, ptl);
+            up_read(&mm->mmap_sem);
+            print_pg_fault (address, write, vma);
+            DEBUG_PANIC("Should not be possible!\n");
+         }
+
+         if(PageCollapsed(my_page) || (!write && !(pte_flags(*my_pte) & _PAGE_PROTNONE))) {
+            pte_unmap_unlock(master_pte, ptl);
+            up_read(&mm->mmap_sem);
+
+            DEBUG_PGFAULT("Pagefault was serviced by another thread\n");
+            RECORD_DURATION_END(time_spent_in_pgfault_handler, nr_pgfault);
+            return;
+         }
+
+         if(pte_flags(*my_pte) & _PAGE_PROTNONE) {
+            pte_t new_pte;
+
+            if(PageCollapsed(master_page)) {
+               DEBUG_PGFAULT("Found the data in the master's mm. Protecting (if needed) and copying...\n");
+
+               /* That's not the unique copy of the page anymore */
+               ClearPageCollapsed(master_page);
+
+               /** Copy the content of the page **/
+               copy_user_highpage(my_page, master_page, address, vma);
+
+               /** And update the protection flags **/
+               my_pte = get_pte_from_va(current_pgd, address);
+               if(unlikely(!my_pte)) {
+                  pte_unmap_unlock(master_pte, ptl);
+                  up_read(&mm->mmap_sem);
+                  DEBUG_PANIC("Should not be possible!\n");
+               }
+
+               new_pte = mk_pte(my_page, PAGE_READONLY_EXEC);
+               set_pte_at_notify(mm, address, my_pte, new_pte);
+               flush_tlb_page(vma, address);
+
+               // We can consider that as a minor page fault...
+               perf_sw_event(PERF_COUNT_SW_PAGE_FAULTS_MIN, 1, regs, address);
+            }
+            else { /* Check slaves */
+               int cur_node;
+               pte_t * node_pte;
+               struct page * node_page;
+
+#if WITH_SANITY_CHECKS
+               int found = 0;
+#endif
+
+               for_each_online_node(cur_node) {
+                  if(node == cur_node) {
+                     continue;
+                  }
+
+                  /** We check if the entry exists in this node **/
+                  node_pte = get_pte_from_va(current->mm->pgd_node[cur_node], address);
+                  if(unlikely(!node_pte)) {
+                     dump_pgd_content(mm);
+                     pte_unmap_unlock(master_pte, ptl);
+                     up_read(&mm->mmap_sem);
+                     DEBUG_PANIC("In the current implementation, that should not be the case (address = 0x%lx) !\n", page_va(address));
+                  }
+
+                  node_page = pte_page(*node_pte);
+
+                  if(unlikely(!node_page)) {
+                     dump_pgd_content(mm);
+                     pte_unmap_unlock(master_pte, ptl);
+                     up_read(&mm->mmap_sem);
+                     DEBUG_PANIC("In the current implementation, that should not be the case (address = 0x%lx) !\n", page_va(address));
+                  }
+
+                  if(PageCollapsed(node_page) || !(pte_flags(*node_pte) & _PAGE_PROTNONE)) {
+                     DEBUG_PGFAULT("Found the current data in node %d. Protecting and copying...\n", cur_node);
+
+#if ENABLE_PINGPONG_FIX
+                     if(PageCollapsed(node_page) && write) {
+                        // Ping pong effect //
+                        INCR_REP_STAT_VALUE(nr_pingpong, 1);
+                        SetPagePingPong(my_page);
+                     }
+#endif
+
+                     /** Write protect the page because there will be multiple copies **/
+                     new_pte = pte_wrprotect(*node_pte);
+                     set_pte_at(mm, address, node_pte, new_pte);
+                     flush_tlb_page(vma, address);
+
+                     /** That's not the unique copy of the page **/
+                     ClearPageCollapsed(node_page);
+
+                     /** Copy the content of the page **/
+                     copy_user_highpage(my_page, node_page, address, vma);
+
+                     /** And update the protection flags **/
+                     new_pte = mk_pte(my_page, PAGE_READONLY_EXEC);
+                     set_pte_at_notify(mm, address, my_pte, new_pte);
+
+                     /** TODO: can we merge the 2 flushs ? **/
+                     flush_tlb_page(vma, address);
+
+                     // Make sure that it is synchronized
+                     my_page->stats = node_page->stats;
+
+                     // We can consider that as a minor page fault...
+                     perf_sw_event(PERF_COUNT_SW_PAGE_FAULTS_MIN, 1, regs, address);
+
+#if WITH_SANITY_CHECKS
+                     found = 1;
+#endif
+                     break;
+                  }
+               }
+
+#if WITH_SANITY_CHECKS
+               if(!found) {
+                  dump_pgd_content(mm);
+                  pte_unmap_unlock(master_pte, ptl);
+                  up_read(&mm->mmap_sem);
+                  DEBUG_PANIC("no current data found, shouldn't be possible\n");
+               }
+#endif
+            }
+         }
+
+#if ENABLE_PINGPONG_FIX
+         if(PagePingPong(my_page)) {
+            revert_replication(mm, vma, address, master_pte, my_page);
+            INCR_REP_STAT_VALUE(nr_collapses, 1);
+         }
+         else if (write) {
+            collapse_all_other_copies (mm, vma, address, my_page, node, my_pte);
+            INCR_REP_STAT_VALUE(nr_collapses, 1);
+         }
+#elif ENABLE_COLLAPSE_FREQ_FIX
+         if(write) {
+            /* u64 rdt;
+            rdtscll(rdt);
+            if((my_page->stats).last_collapse_time) {
+               (my_page->stats).time_between_two_collapses += (rdt - (my_page->stats).last_collapse_time);
+            }
+            (my_page->stats).last_collapse_time = rdt;
+            */
+
+            (my_page->stats).nr_collapses++;
+
+            if(my_page->stats.nr_collapses > MAX_NR_COLLAPSE_PER_PAGE) {
+               //printk("%lu collapses on page 0x%lx - Reverting\n", my_page->stats.nr_collapses, page_va(address));
+
+               /* This page will not be replicated anymore */
+               SetPagePingPong(my_page);
+               revert_replication(mm, vma, address, master_pte, my_page);
+            }
+            else {
+               collapse_all_other_copies (mm, vma, address, my_page, node, my_pte);
+            }
+
+            INCR_REP_STAT_VALUE(nr_collapses, 1);
+         }
+#elif ENABLE_PINGPONG_AGGRESSIVE_FIX
+         if(write) {
+            node_set(node, (my_page->stats).written_by_nodes);
+
+            if(nodes_weight((my_page->stats).written_by_nodes) > 1) {
+               DEBUG_WARNING("Page %lx (Heap = %d, Stack = %d) -- Has been written by two different nodes\n",
+                     page_va(address),
+                     (vma->vm_start <= mm->start_stack && vma->vm_end >= mm->start_stack),
+                     (vma->vm_start <= mm->brk && vma->vm_end >= mm->start_brk)
+                     );
+
+               /* This page will not be replicated anymore */
+               SetPagePingPong(my_page);
+
+               revert_replication(mm, vma, address, master_pte, my_page);
+               INCR_REP_STAT_VALUE(nr_collapses, 1);
+            }
+            else {
+               collapse_all_other_copies (mm, vma, address, my_page, node, my_pte);
+               INCR_REP_STAT_VALUE(nr_collapses, 1);
+            }
+         }
+#elif ENABLE_COLLAPSE_FIX
+         if(write) {
+            // We can probably optimize that and do that earlier, which will save some tlb flush operations
+            // but that's definitely easier here
+            revert_replication(mm, vma, address, master_pte, my_page);
+            INCR_REP_STAT_VALUE(nr_collapses, 1);
+         }
+#else
+         if(write) {
+            collapse_all_other_copies (mm, vma, address, my_page, node, my_pte);
+            INCR_REP_STAT_VALUE(nr_collapses, 1);
+         }
+#endif
+
+#if 0 && WITH_SANITY_CHECKS
+         fail = check_pgd_consistency(mm);
+#endif
+
+         pte_unmap_unlock(master_pte, ptl);
+         up_read(&mm->mmap_sem);
+
+         if(unlikely(fail)) {
+            DEBUG_PANIC("BUG !\n");
+         }
+
+         DEBUG_PGFAULT("Page fault on replicated page properly processed (pa = 0x%lx)\n", get_pa_from_va(current_pgd, vma, address));
+         RECORD_DURATION_END(time_spent_in_pgfault_handler, nr_pgfault);
+         return;
+      }
+      else {
+         int ret;
+
+         if(!master_pte || (pte_flags(*master_pte) & _PAGE_PROTNONE) || (write && !pte_write(*master_pte)) ) {
+            if(!master_pte) {
+               DEBUG_PGFAULT("Handling%spage fault on the master. pte is empty\n", write ? " write " : " read ");
+            }
+            else if((pte_flags(*master_pte) & _PAGE_PROTNONE)){
+               DEBUG_PGFAULT("Handling%spage fault on the master. pte is read/write protected\n", write ? " write " : " read ");
+            }
+            else {
+               DEBUG_PGFAULT("Handling%spage fault on the master. pte is write protected\n", write ? " write " : " read ");
+            }
+
+            if(master_pte) {
+               pte_unmap_unlock(master_pte, ptl);
+            }
+
+            /** Handle the fault on the master **/
+            fault = handle_mm_fault(current->mm, vma, address, flags);
+
+            if (unlikely(fault & (VM_FAULT_RETRY | VM_FAULT_REPLICATION_RETRY | VM_FAULT_ERROR | VM_FAULT_NOPAGE))) {
+               if(fault & VM_FAULT_ERROR) {
+                  up_read(&mm->mmap_sem);
+                  DEBUG_PANIC("VM_FAULT_ERROR... Is is normal ?\n");
+               }
+
+               if(unlikely(fault & VM_FAULT_NOPAGE)) {
+                  up_read(&mm->mmap_sem);
+                  DEBUG_PANIC("VM_FAULT_NOPAGE sets. TODO ?\n");
+               }
+
+               if(fault & VM_FAULT_RETRY) {
+                  mm_fault_error(regs, error_code, address, fault);
+                  DEBUG_PGFAULT("Fault to be done again\n");
+               }
+               else { // That's a VM_FAULT_REPLICATION_RETRY
+                  up_read(&mm->mmap_sem);
+               }
+
+#if WITH_SANITY_CHECKS
+               fail = check_addr_spin(address, write, vma);
+               if(fail) {
+                  DEBUG_PANIC("BUG !\n");
+               }
+#endif
+
+               RECORD_DURATION_END(time_spent_in_pgfault_handler, nr_pgfault);
+               return;
+            }
+
+            if (fault & VM_FAULT_MAJOR) {
+               tsk->maj_flt++;
+               perf_sw_event(PERF_COUNT_SW_PAGE_FAULTS_MAJ, 1, regs, address);
+            } else {
+               tsk->min_flt++;
+               perf_sw_event(PERF_COUNT_SW_PAGE_FAULTS_MIN, 1, regs, address);
+            }
+         }
+         else {
+            pte_unmap_unlock(master_pte, ptl);
+
+            // This is a minor page fault
+            tsk->min_flt++;
+            perf_sw_event(PERF_COUNT_SW_PAGE_FAULTS_MIN, 1, regs, address);
+         }
+
+         // Copy it from the master
+         DEBUG_PGFAULT("Inserting the page on node %d (pa = 0x%lx)\n", node, get_pa_from_va(current_pgd, vma, address));
+         ret = rep_copy_pgd_pte(mm, vma, mm->pgd_master, current_pgd, address);
+         if (unlikely(ret & VM_FAULT_ERROR)) {
+            up_read(&mm->mmap_sem);
+            DEBUG_PANIC("Cannot insert page (0x%lx). Return value is %d\n", page_va(address), ret);
+         }
+         else if(unlikely(ret & VM_FAULT_RETRY)) {
+            DEBUG_PGFAULT("Somebody else has filled the entry\n");
+         }
+
+         check_v8086_mode(regs, address, tsk);
+
+#if 0 && WITH_SANITY_CHECKS
+         fail = check_pgd_consistency(mm);
+#endif
+         up_read(&mm->mmap_sem);
+
+#if WITH_SANITY_CHECKS
+         fail |= check_addr_spin(address, write, vma);
+         if(fail) {
+            DEBUG_PANIC("BUG!\n");
+         }
+#endif
+
+         DEBUG_PGFAULT("%s page fault properly processed (pa = 0x%lx)\n", write ? "Write" : "Read", get_pa_from_va(current_pgd, vma, address));
+         RECORD_DURATION_END(time_spent_in_pgfault_handler, nr_pgfault);
+         return;
+      }
+   }
 
 	/*
 	 * If for any reason at all we couldn't handle the fault,
@@ -1188,8 +1750,10 @@ good_area:
 	fault = handle_mm_fault(mm, vma, address, flags);
 
 	if (unlikely(fault & (VM_FAULT_RETRY|VM_FAULT_ERROR))) {
-		if (mm_fault_error(regs, error_code, address, fault))
+		if (mm_fault_error(regs, error_code, address, fault)) {
+         RECORD_DURATION_END(time_spent_in_pgfault_handler, nr_pgfault);
 			return;
+      }
 	}
 
 	/*
@@ -1219,6 +1783,8 @@ good_area:
 	check_v8086_mode(regs, address, tsk);
 
 	up_read(&mm->mmap_sem);
+
+   RECORD_DURATION_END(time_spent_in_pgfault_handler, nr_pgfault);
 }
 
 dotraplinkage void __kprobes

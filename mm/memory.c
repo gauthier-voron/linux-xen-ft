@@ -69,6 +69,8 @@
 
 #include "internal.h"
 
+#include <linux/replicate.h>
+
 #ifdef LAST_NID_NOT_IN_PAGE_FLAGS
 #warning Unfortunate NUMA and NUMA Balancing config, growing page-frame for last_nid.
 #endif
@@ -543,10 +545,22 @@ void free_pgd_range(struct mmu_gather *tlb,
 
 	pgd = pgd_offset(tlb->mm, addr);
 	do {
+      int node;
+
 		next = pgd_addr_end(addr, end);
 		if (pgd_none_or_clear_bad(pgd))
 			continue;
 		free_pud_range(tlb, pgd, addr, next, floor, ceiling);
+
+      if(is_replicated(tlb->mm)) {
+         for_each_online_node(node) {
+            pgd_t * pgd_node = rep_pgd_offset(tlb->mm->pgd_node[node], addr);
+            unsigned long next_node = pgd_addr_end(addr, end);
+            if (!pgd_none_or_clear_bad(pgd_node)) {
+               free_pud_range(tlb, pgd_node, addr, next_node, floor, ceiling);
+            }
+         }
+      }
 	} while (pgd++, addr = next, addr != end);
 }
 
@@ -879,6 +893,20 @@ copy_one_pte(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 		}
 		goto out_set_pte;
 	}
+   else if(is_replicated(src_mm)) {
+      struct page * src_page;
+      src_page = pte_page(*src_pte);
+
+      if(src_page && PageReplication(src_page)) {
+         // Revert replication before changing the protection
+         __DEBUG("Reverting replication for address 0x%lx because we are forking pid %d\n", addr, current->pid);
+         find_and_revert_replication(src_mm, vma, addr, src_pte);
+      }
+      else {
+         // Maybe that's a bit overkill
+         clear_flush_all_node_copies(src_mm, vma, addr);
+      }
+   }
 
 	/*
 	 * If it's a COW mapping, write protect it both
@@ -1147,8 +1175,36 @@ again:
 			ptent = ptep_get_and_clear_full(mm, addr, pte,
 							tlb->fullmm);
 			tlb_remove_tlb_entry(tlb, pte, addr);
+
+         /** FG: We need to clear the "slave" entry as well **/
+         clear_flush_all_node_copies(mm, vma, addr);
+         /***/
+
 			if (unlikely(!page))
 				continue;
+
+         /** Statistics **/
+#if ENABLE_MIGRATION_STATS
+         {
+            replication_stats_t* stats;
+            read_lock(&reset_stats_rwl);
+            stats = get_cpu_ptr(&replication_stats_per_core);
+            stats->nr_pages_freed++;
+
+            if(page->stats.nr_migrations) {
+               stats->nr_pages_migrated_at_least_once++;
+               stats->nr_migrations_per_page += page->stats.nr_migrations;
+
+               if(page->stats.nr_migrations > stats->max_nr_migrations_per_page) {
+                  stats->max_nr_migrations_per_page = page->stats.nr_migrations;
+               }
+            }
+
+            put_cpu_ptr(&replication_stats_per_core);
+            read_unlock(&reset_stats_rwl);
+         }
+#endif
+
 			if (unlikely(details) && details->nonlinear_vma
 			    && linear_page_index(details->nonlinear_vma,
 						addr) != page->index)
@@ -1573,6 +1629,13 @@ split_fallthrough:
 		goto unlock;
 
 	page = vm_normal_page(vma, address, pte);
+   if(!page || ! PageReplication(page)) {
+      if ((flags & FOLL_WRITE) && !pte_write(pte)) {
+         page = NULL;
+         goto unlock;
+      }
+   }
+
 	if (unlikely(!page)) {
 		if ((flags & FOLL_DUMP) ||
 		    !is_zero_pfn(pte_pfn(pte)))
@@ -2825,6 +2888,11 @@ gotten:
 		 * thread doing COW.
 		 */
 		ptep_clear_flush(vma, address, page_table);
+
+      /** FG: We need to clear the "slave" entry as well **/
+      clear_flush_all_node_copies(mm, vma, address);
+      /***/
+
 		page_add_new_anon_rmap(new_page, vma, address);
 		/*
 		 * We call the notify macro here because, when using secondary
@@ -3075,6 +3143,11 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	if (unlikely(!PageSwapCache(page) || page_private(page) != entry.val))
 		goto out_page;
 
+   if(unlikely(PageReplication(page))) {
+      DEBUG_WARNING("Not supported yet");
+      goto out_page;
+   }
+
 	page = ksm_might_need_to_copy(page, vma, address);
 	if (unlikely(!page)) {
 		ret = VM_FAULT_OOM;
@@ -3154,6 +3227,9 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 			ret &= VM_FAULT_ERROR;
 		goto out;
 	}
+
+   /* We must clear and flush all nodes because the mapping has changed on the master */
+   clear_flush_all_node_copies(mm, vma, address);
 
 	/* No need to invalidate - it was non-present before */
 	update_mmu_cache(vma, address, page_table);
@@ -3261,6 +3337,9 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	page_add_new_anon_rmap(page, vma, address);
 setpte:
 	set_pte_at(mm, address, page_table, entry);
+
+   /* We must clear and flush all nodes because the mapping has changed on the master */
+   clear_flush_all_node_copies(mm, vma, address);
 
 	/* No need to invalidate - it was non-present before */
 	update_mmu_cache(vma, address, page_table);
@@ -3424,6 +3503,9 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 		}
 		set_pte_at(mm, address, page_table, entry);
 
+      /* We must clear and flush all nodes because the mapping has changed on the master */
+      clear_flush_all_node_copies(mm, vma, address);
+
 		/* no need to invalidate: a not-present page won't be cached */
 		update_mmu_cache(vma, address, page_table);
 	} else {
@@ -3566,6 +3648,10 @@ int do_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		return 0;
 	}
 
+   if(unlikely(PageReplication(page))) {
+      DEBUG_PANIC("Not supported yet");
+   }
+
 	current_nid = page_to_nid(page);
 	target_nid = numa_migrate_prep(page, vma, addr, current_nid);
 	pte_unmap_unlock(ptep, ptl);
@@ -3702,6 +3788,7 @@ int handle_pte_fault(struct mm_struct *mm,
 {
 	pte_t entry;
 	spinlock_t *ptl;
+   struct page * page;
 
 	entry = *pte;
 	if (!pte_present(entry)) {
@@ -3728,6 +3815,19 @@ int handle_pte_fault(struct mm_struct *mm,
 	spin_lock(ptl);
 	if (unlikely(!pte_same(*pte, entry)))
 		goto unlock;
+
+   /** Maybe the page is replicated now, because we have released the pte lock
+       In this case we just return whith a VM_FAULT_RETRY
+   **/
+   page = pte_page(*pte);
+   if(page && PageReplication(page)) {
+      pte_unmap_unlock(pte, ptl);
+      return VM_FAULT_REPLICATION_RETRY;
+   }
+
+   /* We must clear and flush all nodes because the mapping will probably change on the master */
+   clear_flush_all_node_copies(mm, vma, address);
+
 	if (flags & FAULT_FLAG_WRITE) {
 		if (!pte_write(entry))
 			return do_wp_page(mm, vma, address,
@@ -3848,6 +3948,7 @@ retry:
 	 */
 	pte = pte_offset_map(pmd, address);
 
+   //DEBUG_REP_VV("Addr = 0x%lx, Caller = 0x%lx\n", address,__builtin_return_address(0));
 	return handle_pte_fault(mm, vma, address, pte, pmd, flags);
 }
 

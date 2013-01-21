@@ -10,6 +10,7 @@
 # Normal rules
 #
 .*
+.config
 *.o
 *.o.*
 *.a
@@ -32,6 +33,8 @@ modules.builtin
 *.lzo
 *.patch
 *.gcno
+*.fw
+vmlinux
 
 #
 # Top-level generic files

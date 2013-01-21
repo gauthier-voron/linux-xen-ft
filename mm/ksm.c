@@ -370,9 +370,13 @@ static int break_ksm(struct vm_area_struct *vma, unsigned long addr)
 		page = follow_page(vma, addr, FOLL_GET | FOLL_MIGRATION);
 		if (IS_ERR_OR_NULL(page))
 			break;
-		if (PageKsm(page))
+		if (PageKsm(page)) {
+         if(PageReplication(page)) {
+            DEBUG_PANIC("Not supported !\n");
+         }
 			ret = handle_mm_fault(vma->vm_mm, vma, addr,
 							FAULT_FLAG_WRITE);
+      }
 		else
 			ret = VM_FAULT_WRITE;
 		put_page(page);
@@ -470,6 +474,11 @@ static struct page *get_mergeable_page(struct rmap_item *rmap_item)
 	page = follow_page(vma, addr, FOLL_GET);
 	if (IS_ERR_OR_NULL(page))
 		goto out;
+
+   if(PageReplication(page)) { // We don't merge replicated pages
+      goto out;
+   }
+
 	if (PageAnon(page) || page_trans_compound_anon(page)) {
 		flush_anon_page(vma, page, addr);
 		flush_dcache_page(page);
@@ -893,6 +902,11 @@ static int write_protect_page(struct vm_area_struct *vma, struct page *page,
 		 * or in the middle of the check.
 		 */
 		entry = ptep_clear_flush(vma, addr, ptep);
+
+      /** FG: We need to clear the "slave" entry as well **/
+      clear_flush_all_node_copies(mm, vma, addr);
+      /***/
+
 		/*
 		 * Check that no O_DIRECT or similar I/O is in progress on the
 		 * page
@@ -962,6 +976,12 @@ static int replace_page(struct vm_area_struct *vma, struct page *page,
 
 	flush_cache_page(vma, addr, pte_pfn(*ptep));
 	ptep_clear_flush(vma, addr, ptep);
+
+   /** FG: We need to clear the "slave" entry as well **/
+   clear_flush_all_node_copies(mm, vma, addr);
+   /***/
+
+
 	set_pte_at_notify(mm, addr, ptep, mk_pte(kpage, vma->vm_page_prot));
 
 	page_remove_rmap(page);
@@ -1029,6 +1049,10 @@ static int try_to_merge_one_page(struct vm_area_struct *vma,
 	BUG_ON(PageTransCompound(page));
 	if (!PageAnon(page))
 		goto out;
+
+   if(PageReplication(page)) {
+      DEBUG_PANIC("Not supported\n");
+   }
 
 	/*
 	 * We need the page lock to read a stable PageSwapCache in

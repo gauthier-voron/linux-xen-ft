@@ -109,6 +109,11 @@ enum pageflags {
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 	PG_compound_lock,
 #endif
+   /* JRF */
+   PG_replication, /* Target for replication. */
+   PG_collapsed,
+   PG_pingpong,
+
 	__NR_PAGEFLAGS,
 
 	/* Filesystems */
@@ -208,6 +213,11 @@ PAGEFLAG(Pinned, pinned) TESTSCFLAG(Pinned, pinned)	/* Xen */
 PAGEFLAG(SavePinned, savepinned);			/* Xen */
 PAGEFLAG(Reserved, reserved) __CLEARPAGEFLAG(Reserved, reserved)
 PAGEFLAG(SwapBacked, swapbacked) __CLEARPAGEFLAG(SwapBacked, swapbacked)
+
+/* JRF */
+PAGEFLAG(Replication, replication)
+PAGEFLAG(Collapsed, collapsed)
+PAGEFLAG(PingPong, pingpong)
 
 __PAGEFLAG(SlobFree, slob_free)
 

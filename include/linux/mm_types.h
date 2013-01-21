@@ -16,6 +16,11 @@
 #include <asm/page.h>
 #include <asm/mmu.h>
 
+// That's only used to know what to include in the stats
+// In a debug session, comment and include everything
+#include <linux/replicate-options.h>
+#include <linux/nodemask.h>
+
 #ifndef AT_VECTOR_SIZE_ARCH
 #define AT_VECTOR_SIZE_ARCH 0
 #endif
@@ -38,6 +43,22 @@ struct address_space;
  * allows the use of atomic double word operations on the flags/mapping
  * and lru list pointers also.
  */
+typedef struct {
+#if ENABLE_PINGPONG_AGGRESSIVE_FIX
+   nodemask_t  written_by_nodes;
+#elif ENABLE_COLLAPSE_FREQ_FIX
+   u64         nr_collapses;
+   //u64         time_between_two_collapses;
+   //u64         last_collapse_time;
+#endif
+#if ENABLE_MIGRATION_STATS
+   u64         nr_migrations;
+#endif
+
+   // History for carrefour
+   nodemask_t  accessed_by_nodes;
+} perpage_stats_t;
+
 struct page {
 	/* First double word block */
 	unsigned long flags;		/* Atomic flags, some possibly
@@ -177,6 +198,9 @@ struct page {
 #ifdef LAST_NID_NOT_IN_PAGE_FLAGS
 	int _last_nid;
 #endif
+
+   /** Used for some types of collapses **/
+   perpage_stats_t stats;
 }
 /*
  * The struct page can be forced to be double word aligned so that atomic ops
@@ -337,7 +361,11 @@ struct mm_struct {
 	unsigned long cached_hole_size; 	/* if non-zero, the largest hole below free_area_cache */
 	unsigned long free_area_cache;		/* first hole of size cached_hole_size or larger */
 	unsigned long highest_vm_end;		/* highest vma end address */
-	pgd_t * pgd;
+
+   /* JRF */
+	pgd_t * pgd_master;
+   pgd_t * pgd_node[MAX_NUMNODES];
+
 	atomic_t mm_users;			/* How many users with user space? */
 	atomic_t mm_count;			/* How many references to "struct mm_struct" (users count as 1) */
 	int map_count;				/* number of VMAs */
@@ -437,6 +465,9 @@ struct mm_struct {
 	int first_nid;
 #endif
 	struct uprobes_state uprobes_state;
+
+   /** JRF **/
+   int replicated_mm;
 };
 
 /* first nid will either be a valid NID or one of these values */

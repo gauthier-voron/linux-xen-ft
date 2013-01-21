@@ -33,7 +33,12 @@ static void zap_pte(struct mm_struct *mm, struct vm_area_struct *vma,
 
 		flush_cache_page(vma, addr, pte_pfn(pte));
 		pte = ptep_clear_flush(vma, addr, ptep);
-		page = vm_normal_page(vma, addr, pte);
+
+      /** FG: We need to clear the "slave" entry as well **/
+      clear_flush_all_node_copies(mm, vma, addr);
+      /***/
+
+      page = vm_normal_page(vma, addr, pte);
 		if (page) {
 			if (pte_dirty(pte))
 				set_page_dirty(page);

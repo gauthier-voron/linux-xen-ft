@@ -25,6 +25,8 @@
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
 
+#include <linux/replicate.h>
+
 #include "internal.h"
 
 static pmd_t *get_old_pmd(struct mm_struct *mm, unsigned long addr)
@@ -124,6 +126,14 @@ static void move_ptes(struct vm_area_struct *vma, pmd_t *old_pmd,
 				   new_pte++, new_addr += PAGE_SIZE) {
 		if (pte_none(*old_pte))
 			continue;
+
+      if(pte_present(*old_pte)) {
+         struct page * page = pte_page(*old_pte);
+         if(page && PageReplication(page)) {
+            // Make sure that we revert replication before moving the page
+            find_and_revert_replication(mm, vma, old_addr, old_pte);
+         }
+      }
 		pte = ptep_get_and_clear(mm, old_addr, old_pte);
 		pte = move_pte(pte, new_vma->vm_page_prot, old_addr, new_addr);
 		set_pte_at(mm, new_addr, new_pte, pte);

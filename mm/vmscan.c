@@ -715,6 +715,11 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 		if (!sc->may_unmap && page_mapped(page))
 			goto keep_locked;
 
+      if (PageReplication(page)) {
+         printk("(SWAP) Tried to swap a replicated page. Ignoring !\n");
+         goto keep_locked;
+      }
+
 		/* Double the slab pressure for mapped and swapcache pages */
 		if (page_mapped(page) || PageSwapCache(page))
 			sc->nr_scanned++;

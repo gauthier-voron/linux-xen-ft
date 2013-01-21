@@ -146,6 +146,10 @@ static int __replace_page(struct vm_area_struct *vma, unsigned long addr,
 	ptep_clear_flush(vma, addr, ptep);
 	set_pte_at_notify(mm, addr, ptep, mk_pte(kpage, vma->vm_page_prot));
 
+   /** FG: We need to clear the "slave" entry as well **/
+   clear_flush_all_node_copies(mm, vma, addr);
+   /***/
+
 	page_remove_rmap(page);
 	if (!page_mapped(page))
 		try_to_free_swap(page);
