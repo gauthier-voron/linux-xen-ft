@@ -43,6 +43,8 @@
 #include <trace/events/migrate.h>
 
 #include <linux/replicate.h>
+#include <linux/carrefour-hooks.h>
+
 #include <linux/mmu_notifier.h>
 
 
@@ -1137,6 +1139,7 @@ static int do_move_page_to_node_array(struct mm_struct *mm,
 	for (pp = pm; pp->node != MAX_NUMNODES; pp++) {
 		struct vm_area_struct *vma;
 		struct page *page;
+      int current_node;
 
 		err = -EFAULT;
 		vma = find_vma(mm, pp->addr);
@@ -1171,7 +1174,9 @@ static int do_move_page_to_node_array(struct mm_struct *mm,
 			 */
 			goto put_and_set;
 
+      current_node = err;
 		err = -EACCES;
+
 		if (page_mapcount(page) > 1 &&
 				!migrate_all)
 			goto put_and_set;
