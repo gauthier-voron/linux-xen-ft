@@ -86,13 +86,11 @@ out_locked:
 
    return ret;
 }
-
 EXPORT_SYMBOL(page_status_for_carrefour);
 
 void reset_carrefour_stats (void) {
    memset(&carrefour_hook_stats, 0, sizeof(struct carrefour_hook_stats_t));
 }
-
 EXPORT_SYMBOL(reset_carrefour_stats);
 
 
@@ -100,8 +98,19 @@ void reset_carrefour_hooks (void) {
    carrefour_options = carrefour_default_options;
    reset_carrefour_stats();
 }
-
 EXPORT_SYMBOL(reset_carrefour_hooks);
+
+
+void configure_carrefour(struct carrefour_options_t options) {
+   carrefour_options = options;
+}
+EXPORT_SYMBOL(configure_carrefour);
+
+
+struct carrefour_hook_stats_t* get_carrefour_hook_stats(void) {
+   return &carrefour_hook_stats;
+}
+EXPORT_SYMBOL(get_carrefour_hook_stats);
 
 static struct page *new_page_node(struct page *p, unsigned long on_node, int **result)
 {
