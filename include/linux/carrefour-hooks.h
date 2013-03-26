@@ -16,6 +16,7 @@ struct carrefour_hook_stats_t {
 // If the page is a regular huge page huge = 1, huge = 2 if it is a THP, huge = 0 otherwise
 int page_status_for_carrefour(int pid, unsigned long addr, int * alread_treated, int * huge);
 int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * nodes);
+int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * nodes);
 
 int move_thread_to_node(pid_t tid, int node);
 struct task_struct * get_task_struct_from_pid(int pid);

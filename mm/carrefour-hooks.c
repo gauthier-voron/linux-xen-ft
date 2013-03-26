@@ -227,8 +227,92 @@ next:
 
    return 0;
 }
-
 EXPORT_SYMBOL(s_migrate_pages);
+
+static struct page *new_page(struct page *p, unsigned long private, int **x)
+{
+   // private containe the destination node
+   return alloc_huge_page_node(page_hstate(p), private);
+}
+
+int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * nodes) {
+   struct task_struct *task;
+   struct mm_struct *mm;
+
+   int i = 0;
+   uint64_t start_migr, end_migr;
+   rdtscll(start_migr);
+
+   rcu_read_lock();
+   task = find_task_by_vpid(pid);
+   if(!task) {
+      rcu_read_unlock();
+      return -ESRCH;
+   }
+   mm = get_task_mm(task);
+   rcu_read_unlock();
+   if (!mm)
+      return -EINVAL;
+
+	down_read(&mm->mmap_sem);
+
+   for(i = 0; i < nr_pages; i++) {
+      struct page * hpage;
+
+      // Get the current page
+      struct vm_area_struct *vma;
+      int ret;
+
+      unsigned long addr = (unsigned long) pages[i];
+      int current_node;
+
+      vma = find_vma(mm, addr);
+      //if (!vma || pp->addr < vma->vm_start || !vma_migratable(vma))
+      if (!vma || addr < vma->vm_start || !is_vm_hugetlb_page(vma))
+         continue;
+
+      hpage = follow_page(vma, addr, 0);
+
+      if (IS_ERR(hpage) || !hpage)
+         continue;
+
+      if(hpage != compound_head(hpage)) {
+         DEBUG_WARNING("[WARNING] What's going on ?\n");
+         continue;
+      }
+
+      if(! PageHuge(hpage)) {
+         DEBUG_WARNING("[WARNING] What am I doing here ?\n");
+         continue;
+      }
+
+      current_node = page_to_nid(hpage);
+      if(current_node != nodes[i]) {
+         // Migrate the page
+         if(get_page_unless_zero(hpage)) {
+            ret = migrate_huge_page(hpage, new_page, nodes[i], false, MIGRATE_SYNC);
+            put_page(hpage);
+
+            if(ret) {
+               printk("[WARNING] Migration of page 0x%lx failed !\n", addr);
+            }
+            else {
+               carrefour_hook_stats.migr_from_to_node[current_node][nodes[i]]++;
+               carrefour_hook_stats.real_nb_migrations++;
+            }
+         }
+      }
+   }
+
+   up_read(&mm->mmap_sem);
+   mmput(mm);
+
+   rdtscll(end_migr);
+   carrefour_hook_stats.time_spent_in_migration = (end_migr - start_migr);
+
+   return 0;
+}
+EXPORT_SYMBOL(s_migrate_hugepages);
 
 // Quick and dirty for now. TODO: update
 int move_thread_to_node(pid_t tid, int node) {
