@@ -3,6 +3,7 @@
 
 struct carrefour_options_t {
    int page_bouncing_fix;
+   int use_balance_numa_api;
 };
 
 struct carrefour_hook_stats_t {
@@ -11,12 +12,20 @@ struct carrefour_hook_stats_t {
    u64 time_spent_in_migration;
 };
 
+// These are our custom errors
+#define EPAGENOTFOUND   65
+#define EREPLICATEDPAGE 66
+#define EINVALIDPAGE    67
 
-// Returns 0 if the page is present, -1 otherwise
+// Returns 0 if the page is present, -<error> otherwise
 // If the page is a regular huge page huge = 1, huge = 2 if it is a THP, huge = 0 otherwise
 int page_status_for_carrefour(int pid, unsigned long addr, int * alread_treated, int * huge);
 int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * nodes);
 int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * nodes);
+int find_and_migrate_thp(int pid, unsigned long addr, int to_node);
+
+// Returns 0 if we found and splitted a huge page
+int find_and_split_thp(int pid, unsigned long addr);
 
 int move_thread_to_node(pid_t tid, int node);
 struct task_struct * get_task_struct_from_pid(int pid);

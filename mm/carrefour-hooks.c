@@ -12,6 +12,7 @@
 
 struct carrefour_options_t carrefour_default_options = {
    .page_bouncing_fix = 0,
+   .use_balance_numa_api = 0,
 };
 
 struct carrefour_options_t carrefour_options;
@@ -117,13 +118,16 @@ static struct page *new_page_node(struct page *p, unsigned long on_node, int **r
 	return alloc_pages_exact_node(on_node, GFP_HIGHUSER_MOVABLE | GFP_THISNODE, 0);
 }
 
-
 int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * nodes) {
    struct task_struct *task;
    struct mm_struct *mm = NULL;
    struct list_head * migratepages_nodes[MAX_NUMNODES];
 
+   int use_balance_numa_api = carrefour_options.use_balance_numa_api;
+
    int i = 0;
+   int err = 0;
+
    u64 start, end;
 
 
@@ -151,11 +155,8 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
    rcu_read_unlock();
 
    if (!mm) {
-      for(i = 0; i < num_online_nodes(); i++) {
-         kfree(migratepages_nodes[i]);
-      }
-
-      return -EINVAL;
+      err = -ESRCH;
+      goto out_clean;
    }
 
    down_read(&mm->mmap_sem);
@@ -180,17 +181,38 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
 
       /* Don't want to migrate a replicated page */
       if (PageReplication(page)) {
-         goto next;
+         put_page(page);
+         continue;
+      }
+
+      if (PageHuge(page) || PageTransHuge(page)) {
+         DEBUG_WARNING("[WARNING] What am I doing here ?\n");
+         put_page(page);
+         continue;
       }
 
       if(carrefour_options.page_bouncing_fix && (page->stats.nr_migrations >= carrefour_options.page_bouncing_fix)) {
-         goto next; 
+         put_page(page);
+         continue;
       }
 
       current_node = page_to_nid(page);
-
-      /** Maybe we can do something similar to migrate.c to batch migrations **/
       if(current_node != nodes[i]) {
+         put_page(page);
+         continue;
+      }
+
+      if(use_balance_numa_api) {
+         if(migrate_misplaced_page(page, nodes[i])) {
+            carrefour_hook_stats.migr_from_to_node[current_node][nodes[i]]++;
+            carrefour_hook_stats.real_nb_migrations++;
+         }
+         else {
+            DEBUG_WARNING("[WARNING] Migration of page 0x%lx failed !\n", addr);
+         }
+      }
+      else {
+         /** Similar to migrate.c : Batching migrations **/
          if(!isolate_lru_page(page)) {
             list_add_tail(&page->lru, migratepages_nodes[nodes[i]]);
             inc_zone_page_state(page, NR_ISOLATED_ANON + page_is_file_cache(page));
@@ -202,30 +224,36 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
          else {
             DEBUG_WARNING("[WARNING] Migration of page 0x%lx failed !\n", addr);
          }
+         put_page(page);
       }
-next:
-      put_page(page);
    }
 
-   for(i = 0; i < num_online_nodes(); i++) {
-      if (!list_empty(migratepages_nodes[i])) {
-         int err;
-         err = migrate_pages(migratepages_nodes[i], new_page_node, i, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED);
-         if (err) {
-            DEBUG_WARNING("[WARNING] Migration of pages on node %d failed !\n", i);
-            putback_lru_pages(migratepages_nodes[i]);
+   if(! use_balance_numa_api) {
+      for(i = 0; i < num_online_nodes(); i++) {
+         if (!list_empty(migratepages_nodes[i])) {
+            err = migrate_pages(migratepages_nodes[i], new_page_node, i, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED);
+            if (err) {
+               DEBUG_WARNING("[WARNING] Migration of pages on node %d failed !\n", i);
+               putback_lru_pages(migratepages_nodes[i]);
+            }
          }
       }
-      kfree(migratepages_nodes[i]);
-	}
+   }
 
    up_read(&mm->mmap_sem);
    mmput(mm);
 
+out_clean:
+   if(use_balance_numa_api) {
+      for(i = 0; i < num_online_nodes(); i++) {
+         kfree(migratepages_nodes[i]);
+      }
+   }
+
    rdtscll(end);
    carrefour_hook_stats.time_spent_in_migration = (end - start);
 
-   return 0;
+   return err;
 }
 EXPORT_SYMBOL(s_migrate_pages);
 
@@ -237,7 +265,7 @@ static struct page *new_page(struct page *p, unsigned long private, int **x)
 
 int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * nodes) {
    struct task_struct *task;
-   struct mm_struct *mm;
+   struct mm_struct *mm = NULL;
 
    int i = 0;
    uint64_t start_migr, end_migr;
@@ -245,14 +273,13 @@ int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * 
 
    rcu_read_lock();
    task = find_task_by_vpid(pid);
-   if(!task) {
-      rcu_read_unlock();
-      return -ESRCH;
+   if(task) {
+      mm = get_task_mm(task);
    }
-   mm = get_task_mm(task);
    rcu_read_unlock();
+
    if (!mm)
-      return -EINVAL;
+      return -ESRCH;
 
 	down_read(&mm->mmap_sem);
 
@@ -337,6 +364,183 @@ struct task_struct * get_task_struct_from_pid(int pid) {
    return task;
 }
 EXPORT_SYMBOL(get_task_struct_from_pid);
+
+int find_and_split_thp(int pid, unsigned long addr) {
+   struct task_struct *task;
+   struct mm_struct *mm = NULL;
+   struct vm_area_struct *vma;
+   struct page * page;
+   int ret = 1;
+   int err;
+
+   rcu_read_lock();
+   task = find_task_by_vpid(pid);
+   if(task) {
+      mm = get_task_mm(task);
+   }
+   rcu_read_unlock();
+   if (!mm) {
+      ret = -ESRCH;
+      return ret;
+   }
+
+   down_read(&mm->mmap_sem);
+
+   vma = find_vma(mm, addr);
+   if (!vma || addr < vma->vm_start) {
+      ret = -EPAGENOTFOUND;
+      goto out_locked;
+   }
+
+   if (!transparent_hugepage_enabled(vma)) {
+      ret = -EINVALIDPAGE;
+      goto out_locked;
+   }
+ 
+   page = follow_page(vma, addr, FOLL_GET);
+
+   err = PTR_ERR(page);
+   if (IS_ERR(page) || !page) {
+      ret = -EPAGENOTFOUND;
+      goto out_locked;
+   }
+
+   if(PageTransHuge(page)) {
+      // We found the page. Split it.
+      // split_huge_page does not create new pages. It will simple create new ptes and update the pmd
+      // see  __split_huge_page_map for details
+      ret = split_huge_page(page);
+   }
+   else {
+      ret = -EINVALIDPAGE;
+   }
+
+   put_page(page);
+
+out_locked:
+   //printk("[Core %d, PID %d] Releasing mm lock (0x%p)\n", smp_processor_id(), pid, &mm->mmap_sem);
+   up_read(&mm->mmap_sem);
+   mmput(mm);
+
+   return ret;
+}
+EXPORT_SYMBOL(find_and_split_thp);
+
+int find_and_migrate_thp(int pid, unsigned long addr, int to_node) {
+   struct task_struct *task;
+   struct mm_struct *mm = NULL;
+   struct vm_area_struct *vma;
+   struct page *page;
+   int ret = -1;
+   int current_node;
+
+   pgd_t *pgd;
+   pud_t *pud;
+   pmd_t *pmd, orig_pmd;
+
+   __DEBUG("Entering function for address 0x%lx\n",addr);
+
+   rcu_read_lock();
+   task = find_task_by_vpid(pid);
+   if(task) {
+      mm = get_task_mm(task);
+   }
+   rcu_read_unlock();
+   if (!mm) {
+      ret = -ESRCH;
+      return ret;
+   }
+
+   down_read(&mm->mmap_sem);
+
+   vma = find_vma(mm, addr);
+   if (!vma || addr < vma->vm_start) {
+      ret = -EPAGENOTFOUND;
+      goto out_locked;
+   }
+
+   if (!transparent_hugepage_enabled(vma)) {
+      ret = -EINVALIDPAGE;
+      goto out_locked;
+   }
+ 
+   pgd = pgd_offset(mm, addr);
+   if (!pgd_present(*pgd )) {
+      ret = -EINVALIDPAGE;
+      goto out_locked;
+   }
+
+   pud = pud_offset(pgd, addr);
+   if(!pud_present(*pud)) {
+      ret = -EINVALIDPAGE;
+      goto out_locked;
+   }
+
+   pmd = pmd_offset(pud, addr);
+   if (!pmd_present(*pmd ) || !pmd_trans_huge(*pmd)) {
+      ret = -EINVALIDPAGE;
+      goto out_locked;
+   }
+
+   // We found a valid pmd for this address and that's a THP
+   orig_pmd = *pmd;
+
+   // Mostly copied from the do_huge_pmd_numa_page function
+	spin_lock(&mm->page_table_lock);
+	if (unlikely(!pmd_same(orig_pmd, *pmd))) {
+      spin_unlock(&mm->page_table_lock);
+		goto out_locked;
+   }
+
+	page = pmd_page(*pmd);
+	get_page(page);
+
+	current_node = page_to_nid(page);
+
+   if(current_node == to_node) {
+		put_page(page);
+      spin_unlock(&mm->page_table_lock);
+		goto out_locked;
+   }
+	spin_unlock(&mm->page_table_lock);
+
+	/* Acquire the page lock to serialise THP migrations */
+	lock_page(page);
+
+	/* Confirm the PTE did not while locked */
+	spin_lock(&mm->page_table_lock);
+	if (unlikely(!pmd_same(orig_pmd, *pmd))) {
+		unlock_page(page);
+		put_page(page);
+      spin_unlock(&mm->page_table_lock);
+		goto out_locked;
+	}
+	spin_unlock(&mm->page_table_lock);
+
+	/* Migrate the THP to the requested node */
+	ret = migrate_misplaced_transhuge_page(mm, vma, pmd, orig_pmd, addr, page, to_node);
+
+	if (ret) {
+      __DEBUG("Migrated THP 0x%lx successfully\n", addr);
+      ret = 0;
+   }
+   else {
+      __DEBUG("Failed migrating THP 0x%lx\n", addr);
+      ret = -1;
+      unlock_page(page);
+      // put page has been performed by migrate_misplaced_transhuge_page
+	}
+
+out_locked:
+   //printk("[Core %d, PID %d] Releasing mm lock (0x%p)\n", smp_processor_id(), pid, &mm->mmap_sem);
+   up_read(&mm->mmap_sem);
+   mmput(mm);
+
+   __DEBUG("Return value is %d\n", ret);
+   return ret;
+}
+EXPORT_SYMBOL(find_and_migrate_thp);
+
 
 static int __init carrefour_hooks_init(void) {
    printk("Initializing Carrefour hooks\n");
