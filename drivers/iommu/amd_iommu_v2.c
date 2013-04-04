@@ -458,7 +458,7 @@ static void mn_invalidate_range_end(struct mmu_notifier *mn,
 	dev_state   = pasid_state->device_state;
 
 	amd_iommu_domain_set_gcr3(dev_state->domain, pasid_state->pasid,
-				  __pa(pasid_state->mm->pgd));
+				  __pa(pasid_state->mm->pgd_master));
 }
 
 static struct mmu_notifier_ops iommu_mn = {
@@ -699,7 +699,7 @@ int amd_iommu_bind_pasid(struct pci_dev *pdev, int pasid,
 		goto out_unregister;
 
 	ret = amd_iommu_domain_set_gcr3(dev_state->domain, pasid,
-					__pa(pasid_state->mm->pgd));
+					__pa(pasid_state->mm->pgd_master));
 	if (ret)
 		goto out_clear_state;
 

@@ -231,7 +231,7 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
    if(! use_balance_numa_api) {
       for(i = 0; i < num_online_nodes(); i++) {
          if (!list_empty(migratepages_nodes[i])) {
-            err = migrate_pages(migratepages_nodes[i], new_page_node, i, 0, MIGRATE_SYNC, MR_NUMA_MISPLACED);
+            err = migrate_pages(migratepages_nodes[i], new_page_node, i, MIGRATE_SYNC, MR_NUMA_MISPLACED);
             if (err) {
                DEBUG_WARNING("[WARNING] Migration of pages on node %d failed !\n", i);
                putback_lru_pages(migratepages_nodes[i]);
@@ -317,7 +317,7 @@ int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * 
       if(current_node != nodes[i]) {
          // Migrate the page
          if(get_page_unless_zero(hpage)) {
-            ret = migrate_huge_page(hpage, new_page, nodes[i], false, MIGRATE_SYNC);
+            ret = migrate_huge_page(hpage, new_page, nodes[i], MIGRATE_SYNC);
             put_page(hpage);
 
             if(ret) {

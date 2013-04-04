@@ -41,6 +41,7 @@
 #include <asm/tlbflush.h>
 #include "internal.h"
 
+#include <linux/replicate.h>
 #ifdef CONFIG_NUMA
 #define NUMA(x)		(x)
 #define DO_NUMA(x)	do { (x); } while (0)

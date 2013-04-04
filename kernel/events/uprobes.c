@@ -38,6 +38,8 @@
 
 #include <linux/uprobes.h>
 
+#include <linux/replicate.h>
+
 #define UINSNS_PER_PAGE			(PAGE_SIZE/UPROBE_XOL_SLOT_BYTES)
 #define MAX_UPROBE_XOL_SLOTS		UINSNS_PER_PAGE
 
