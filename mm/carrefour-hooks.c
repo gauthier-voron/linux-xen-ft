@@ -438,8 +438,6 @@ int find_and_migrate_thp(int pid, unsigned long addr, int to_node) {
    pud_t *pud;
    pmd_t *pmd, orig_pmd;
 
-   __DEBUG("Entering function for address 0x%lx\n",addr);
-
    rcu_read_lock();
    task = find_task_by_vpid(pid);
    if(task) {
@@ -520,12 +518,12 @@ int find_and_migrate_thp(int pid, unsigned long addr, int to_node) {
 	/* Migrate the THP to the requested node */
 	ret = migrate_misplaced_transhuge_page(mm, vma, pmd, orig_pmd, addr, page, to_node);
 
-	if (ret) {
-      __DEBUG("Migrated THP 0x%lx successfully\n", addr);
+	if (ret > 0) {
+      //__DEBUG("Migrated THP 0x%lx successfully\n", addr);
       ret = 0;
    }
    else {
-      __DEBUG("Failed migrating THP 0x%lx\n", addr);
+      //__DEBUG("Failed migrating THP 0x%lx (ret = %d)\n", addr, ret);
       ret = -1;
       unlock_page(page);
       // put page has been performed by migrate_misplaced_transhuge_page
@@ -536,7 +534,6 @@ out_locked:
    up_read(&mm->mmap_sem);
    mmput(mm);
 
-   __DEBUG("Return value is %d\n", ret);
    return ret;
 }
 EXPORT_SYMBOL(find_and_migrate_thp);

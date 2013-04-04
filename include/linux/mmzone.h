@@ -731,7 +731,8 @@ typedef struct pglist_data {
 	struct task_struct *kswapd;	/* Protected by lock_memory_hotplug() */
 	int kswapd_max_order;
 	enum zone_type classzone_idx;
-#ifdef CONFIG_NUMA_BALANCING
+#if 1
+//#ifdef CONFIG_NUMA_BALANCING
 	/*
 	 * Lock serializing the per destination node AutoNUMA memory
 	 * migration rate limiting data.

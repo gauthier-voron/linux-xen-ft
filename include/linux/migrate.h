@@ -91,8 +91,7 @@ static inline int migrate_huge_page_move_mapping(struct address_space *mapping,
 
 #endif /* CONFIG_MIGRATION */
 
-#ifdef CONFIG_NUMA_BALANCING
-extern int migrate_misplaced_page(struct page *page, int node);
+#if 1
 extern int migrate_misplaced_page(struct page *page, int node);
 extern bool migrate_ratelimited(int node);
 #else
@@ -106,7 +105,8 @@ static inline bool migrate_ratelimited(int node)
 }
 #endif /* CONFIG_NUMA_BALANCING */
 
-#if defined(CONFIG_NUMA_BALANCING) && defined(CONFIG_TRANSPARENT_HUGEPAGE)
+#if defined(CONFIG_TRANSPARENT_HUGEPAGE)
+//#if defined(CONFIG_NUMA_BALANCING) && defined(CONFIG_TRANSPARENT_HUGEPAGE)
 extern int migrate_misplaced_transhuge_page(struct mm_struct *mm,
 			struct vm_area_struct *vma,
 			pmd_t *pmd, pmd_t entry,

@@ -4,7 +4,9 @@
 struct carrefour_options_t {
    int page_bouncing_fix;
    int use_balance_numa_api;
+   int use_balance_numa_rate_limit;
 };
+extern struct carrefour_options_t carrefour_options;
 
 struct carrefour_hook_stats_t {
    unsigned real_nb_migrations;

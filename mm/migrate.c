@@ -1466,7 +1466,8 @@ int migrate_vmas(struct mm_struct *mm, const nodemask_t *to,
  	return err;
 }
 
-#ifdef CONFIG_NUMA_BALANCING
+#if 1
+//#ifdef CONFIG_NUMA_BALANCING
 /*
  * Returns true if this is a safe migration target node for misplaced NUMA
  * pages. Currently it only checks the watermarks which crude
@@ -1545,6 +1546,10 @@ bool migrate_ratelimited(int node)
 bool numamigrate_update_ratelimit(pg_data_t *pgdat, unsigned long nr_pages)
 {
 	bool rate_limited = false;
+
+   if(! carrefour_options.use_balance_numa_rate_limit) {
+      return false;
+   }
 
 	/*
 	 * Rate-limit the amount of data that is being migrated to a node.
@@ -1652,7 +1657,8 @@ out:
 }
 #endif /* CONFIG_NUMA_BALANCING */
 
-#if defined(CONFIG_NUMA_BALANCING) && defined(CONFIG_TRANSPARENT_HUGEPAGE)
+#if defined(CONFIG_TRANSPARENT_HUGEPAGE)
+//#if defined(CONFIG_NUMA_BALANCING) && defined(CONFIG_TRANSPARENT_HUGEPAGE)
 /*
  * Migrates a THP to a given target node. page must be locked and is unlocked
  * before returning.
