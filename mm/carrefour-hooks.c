@@ -176,6 +176,7 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
       page = follow_page(vma, addr, FOLL_GET);
 
       if (IS_ERR(page) || !page) {
+         //DEBUG_WARNING("Cannot migrate a NULL page\n");
          continue;
       }
 
@@ -192,18 +193,22 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
       }
 
       if(carrefour_options.page_bouncing_fix && (page->stats.nr_migrations >= carrefour_options.page_bouncing_fix)) {
+         //DEBUG_WARNING("Page bouncing fix enable\n");
          put_page(page);
          continue;
       }
 
       current_node = page_to_nid(page);
-      if(current_node != nodes[i]) {
+      if(current_node == nodes[i]) {
+         //DEBUG_WARNING("Current node (%d) = destination node (%d) for page 0x%lx\n", current_node, nodes[i], addr);
          put_page(page);
          continue;
       }
 
       if(use_balance_numa_api) {
          if(migrate_misplaced_page(page, nodes[i])) {
+            //__DEBUG("Migrating page 0x%lx\n", addr);
+
             carrefour_hook_stats.migr_from_to_node[current_node][nodes[i]]++;
             carrefour_hook_stats.real_nb_migrations++;
          }
@@ -214,6 +219,7 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
       else {
          /** Similar to migrate.c : Batching migrations **/
          if(!isolate_lru_page(page)) {
+            //__DEBUG("Migrating page 0x%lx\n", addr);
             list_add_tail(&page->lru, migratepages_nodes[nodes[i]]);
             inc_zone_page_state(page, NR_ISOLATED_ANON + page_is_file_cache(page));
 
@@ -520,6 +526,8 @@ int find_and_migrate_thp(int pid, unsigned long addr, int to_node) {
 
 	if (ret > 0) {
       //__DEBUG("Migrated THP 0x%lx successfully\n", addr);
+      carrefour_hook_stats.migr_from_to_node[current_node][to_node]++;
+      carrefour_hook_stats.real_nb_migrations++;
       ret = 0;
    }
    else {
