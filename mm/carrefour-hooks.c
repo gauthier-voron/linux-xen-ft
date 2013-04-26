@@ -257,7 +257,7 @@ out_clean:
    }
 
    rdtscll(end);
-   carrefour_hook_stats.time_spent_in_migration = (end - start);
+   carrefour_hook_stats.time_spent_in_migration += (end - start);
 
    return err;
 }
