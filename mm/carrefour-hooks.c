@@ -213,7 +213,7 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
             carrefour_hook_stats.real_nb_migrations++;
          }
          else {
-            DEBUG_WARNING("[WARNING] Migration of page 0x%lx failed !\n", addr);
+            //DEBUG_WARNING("[WARNING] Migration of page 0x%lx failed !\n", addr);
          }
       }
       else {
@@ -228,7 +228,7 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
             carrefour_hook_stats.real_nb_migrations++;
          }
          else {
-            DEBUG_WARNING("[WARNING] Migration of page 0x%lx failed !\n", addr);
+            //DEBUG_WARNING("[WARNING] Migration of page 0x%lx failed !\n", addr);
          }
          put_page(page);
       }
@@ -258,6 +258,7 @@ out_clean:
 
    rdtscll(end);
    carrefour_hook_stats.time_spent_in_migration += (end - start);
+   carrefour_hook_stats.s_migrate_nb_calls ++;
 
    return err;
 }

@@ -12,6 +12,7 @@ struct carrefour_hook_stats_t {
    unsigned real_nb_migrations;
    unsigned migr_from_to_node[MAX_NUMNODES][MAX_NUMNODES];
    u64 time_spent_in_migration;
+   u32 s_migrate_nb_calls;
 };
 
 // These are our custom errors
