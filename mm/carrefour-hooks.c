@@ -520,6 +520,11 @@ int find_and_migrate_thp(int pid, unsigned long addr, int to_node) {
       spin_unlock(&mm->page_table_lock);
 		goto out_locked;
 	}
+
+   // Make sure that pmd is tagged as "NUMA"
+   orig_pmd = pmd_mknuma(orig_pmd);
+   set_pmd_at(mm, addr & PMD_MASK, pmd, orig_pmd);
+   
 	spin_unlock(&mm->page_table_lock);
 
 	/* Migrate the THP to the requested node */
@@ -534,8 +539,18 @@ int find_and_migrate_thp(int pid, unsigned long addr, int to_node) {
    else {
       //__DEBUG("Failed migrating THP 0x%lx (ret = %d)\n", addr, ret);
       ret = -1;
-      unlock_page(page);
       // put page has been performed by migrate_misplaced_transhuge_page
+      
+      // It failed
+      // We need to clear the pmd_numa_flag ...   
+      spin_lock(&mm->page_table_lock);
+      if (pmd_same(orig_pmd, *pmd)) {
+         orig_pmd = pmd_mknonnuma(orig_pmd);
+         set_pmd_at(mm, addr, pmd, orig_pmd);
+         VM_BUG_ON(pmd_numa(*pmd));
+         update_mmu_cache_pmd(vma, addr, pmd);
+      }
+      spin_unlock(&mm->page_table_lock);
 	}
 
 out_locked:

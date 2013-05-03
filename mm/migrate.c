@@ -1737,6 +1737,9 @@ int migrate_misplaced_transhuge_page(struct mm_struct *mm,
 		goto out;
 	}
 
+   /** FGAUD: We need to flush the TLB, don't we ? **/
+   flush_tlb_page(vma, haddr);
+
 	/*
 	 * Traditional migration needs to prepare the memcg charge
 	 * transaction early to prevent the old page from being
