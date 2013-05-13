@@ -1189,14 +1189,13 @@ again:
             replication_stats_t* stats;
             read_lock(&reset_stats_rwl);
             stats = get_cpu_ptr(&replication_stats_per_core);
-            stats->nr_pages_freed++;
+            stats->nr_4k_pages_freed++;
 
             if(page->stats.nr_migrations) {
-               stats->nr_pages_migrated_at_least_once++;
-               stats->nr_migrations_per_page += page->stats.nr_migrations;
+               stats->nr_4k_pages_migrated_at_least_once++;
 
-               if(page->stats.nr_migrations > stats->max_nr_migrations_per_page) {
-                  stats->max_nr_migrations_per_page = page->stats.nr_migrations;
+               if(page->stats.nr_migrations > stats->max_nr_migrations_per_4k_page) {
+                  stats->max_nr_migrations_per_4k_page = page->stats.nr_migrations;
                }
             }
 

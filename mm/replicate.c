@@ -689,88 +689,41 @@ That's not very clean, we should use sysfs instead [TODO]
 **/
 static int display_replication_stats(struct seq_file *m, void* v)
 {
-   replication_stats_t global_stats;
-   int cpu;
-   unsigned long time_rd_lock = 0;
-   unsigned long time_wr_lock = 0;
-   unsigned long time_lock    = 0;
-   unsigned long time_pgfault = 0;
+   replication_stats_t* global_stats;
+   int cpu, i, j;
+   unsigned long time_rd_lock  = 0;
+   unsigned long time_wr_lock  = 0;
+   unsigned long time_lock     = 0;
+   unsigned long time_pgfault  = 0;
+   unsigned long nr_migrations = 0;
 
    seq_printf(m, "#Number of online cpus: %d\n", num_online_cpus());
    seq_printf(m, "#Number of online nodes: %d\n", num_online_nodes());
 
    /** Merging stats **/
-   memset(&global_stats, 0, sizeof(replication_stats_t));
+   global_stats = kmalloc(sizeof(replication_stats_t), GFP_KERNEL);
+   if(!global_stats) {
+      DEBUG_PANIC("No more memory ?\n");
+   }
+   memset(global_stats, 0, sizeof(replication_stats_t));
 
    write_lock(&reset_stats_rwl);
 
    for_each_online_cpu(cpu) {
-      replication_stats_t * stats;
+      replication_stats_t * stats = per_cpu_ptr(&replication_stats_per_core, cpu);
 
-      time_rd_lock = 0;
-      time_wr_lock = 0;
-      time_lock    = 0;
-      time_pgfault = 0;
-
-      stats = per_cpu_ptr(&replication_stats_per_core, cpu);
-
-      global_stats.nr_mm_switch += stats->nr_mm_switch;
-
-      global_stats.nr_collapses += stats->nr_collapses;
-      global_stats.nr_replicated_pages += stats->nr_replicated_pages;
-
-      global_stats.nr_readlock_taken += stats->nr_readlock_taken;
-      global_stats.nr_writelock_taken += stats->nr_writelock_taken;
-      global_stats.time_spent_acquiring_readlocks += stats->time_spent_acquiring_readlocks;
-      global_stats.time_spent_acquiring_writelocks += stats->time_spent_acquiring_writelocks;
-
-      global_stats.time_spent_in_pgfault_handler += stats->time_spent_in_pgfault_handler;
-      global_stats.nr_pgfault += stats->nr_pgfault;
-
-      global_stats.nr_pingpong += stats->nr_pingpong;
-      global_stats.nr_replicated_decisions_reverted += stats->nr_replicated_decisions_reverted;
-
-      global_stats.nr_ignored_orders += stats->nr_ignored_orders;
-
-      global_stats.nr_migrations += stats->nr_migrations;
-      global_stats.nr_migrations_per_page += stats->nr_migrations_per_page;
-      global_stats.nr_pages_migrated_at_least_once += stats->nr_pages_migrated_at_least_once;
-      global_stats.nr_pages_freed += stats->nr_pages_freed;
-
-      if(stats->max_nr_migrations_per_page > global_stats.max_nr_migrations_per_page) {
-         global_stats.max_nr_migrations_per_page = stats->max_nr_migrations_per_page;
+      // Automatic merging of everything
+      for(i = 0; i < sizeof(replication_stats_t) / sizeof(uint64_t); i++) {
+         if(((uint64_t*) stats) + i == &stats->max_nr_migrations_per_4k_page) {
+            // We don't want to automerge this one
+            continue;
+         }
+         ((uint64_t *) global_stats)[i] += ((uint64_t*) stats)[i];
       }
 
-#if PRINT_PER_CORE_STATS
-      seq_printf(m, "[CPU %d] Number of MM switch: %lu\n", cpu, (unsigned long) stats->nr_mm_switch);
-      seq_printf(m, "[CPU %d] Number of collapses: %lu\n", cpu, (unsigned long) stats->nr_collapses);
-      seq_printf(m, "[CPU %d] Number of ping pongs: %lu\n", cpu, (unsigned long) stats->nr_pingpong);
-      seq_printf(m, "[CPU %d] Number of reverted replication decisions: %lu\n", cpu, (unsigned long) stats->nr_replicated_decisions_reverted);
-
-      if(stats->nr_readlock_taken) {
-         time_rd_lock = (unsigned long) (stats->time_spent_acquiring_readlocks / stats->nr_readlock_taken);
+      if(stats->max_nr_migrations_per_4k_page > global_stats->max_nr_migrations_per_4k_page) {
+         global_stats->max_nr_migrations_per_4k_page = stats->max_nr_migrations_per_4k_page;
       }
-      if(stats->nr_writelock_taken) {
-         time_wr_lock = (unsigned long) (stats->time_spent_acquiring_writelocks / stats->nr_writelock_taken);
-      }
-      if(stats->nr_readlock_taken + stats->nr_writelock_taken) {
-         time_lock = (unsigned long) ((stats->time_spent_acquiring_readlocks + stats->time_spent_acquiring_writelocks) / (stats->nr_readlock_taken + stats->nr_writelock_taken));
-      }
-      if(stats->nr_pgfault) {
-         time_pgfault = (unsigned long) (stats->time_spent_in_pgfault_handler / stats->nr_pgfault);
-      }
-
-
-      seq_printf(m, "[CPU %d] Time spent acquiring read locks: %lu cycles\n", cpu, time_rd_lock);
-
-      seq_printf(m, "[CPU %d] Time spent acquiring write locks: %lu cycles\n", cpu, time_wr_lock);
-      seq_printf(m, "[CPU %d] Time spent acquiring locks (global): %lu cycles\n", cpu, time_lock);
-
-      seq_printf(m, "[CPU %d] Number of page faults: %lu\n", cpu, (unsigned long) stats->nr_pgfault);
-      seq_printf(m, "[CPU %d] Time spent in the page fault handler: %lu cycles\n", cpu, time_pgfault);
-
-      seq_printf(m, "[CPU %d] Number of migrations: %lu\n", cpu, (unsigned long) stats->nr_migrations);
-#endif
    }
 
    time_rd_lock = 0;
@@ -778,39 +731,63 @@ static int display_replication_stats(struct seq_file *m, void* v)
    time_lock    = 0;
    time_pgfault = 0;
 
-   if(global_stats.nr_readlock_taken) {
-      time_rd_lock = (unsigned long) (global_stats.time_spent_acquiring_readlocks / global_stats.nr_readlock_taken);
+   if(global_stats->nr_readlock_taken) {
+      time_rd_lock = (unsigned long) (global_stats->time_spent_acquiring_readlocks / global_stats->nr_readlock_taken);
    }
-   if(global_stats.nr_writelock_taken) {
-      time_wr_lock = (unsigned long) (global_stats.time_spent_acquiring_writelocks / global_stats.nr_writelock_taken);
+   if(global_stats->nr_writelock_taken) {
+      time_wr_lock = (unsigned long) (global_stats->time_spent_acquiring_writelocks / global_stats->nr_writelock_taken);
    }
-   if(global_stats.nr_readlock_taken + global_stats.nr_writelock_taken) {
-      time_lock = (unsigned long) ((global_stats.time_spent_acquiring_readlocks + global_stats.time_spent_acquiring_writelocks) / (global_stats.nr_readlock_taken + global_stats.nr_writelock_taken));
+   if(global_stats->nr_readlock_taken + global_stats->nr_writelock_taken) {
+      time_lock = (unsigned long) ((global_stats->time_spent_acquiring_readlocks + global_stats->time_spent_acquiring_writelocks) / (global_stats->nr_readlock_taken + global_stats->nr_writelock_taken));
    }
-   if(global_stats.nr_pgfault) {
-      time_pgfault = (unsigned long) (global_stats.time_spent_in_pgfault_handler / global_stats.nr_pgfault);
+   if(global_stats->nr_pgfault) {
+      time_pgfault = (unsigned long) (global_stats->time_spent_in_pgfault_handler / global_stats->nr_pgfault);
    }
 
-   seq_printf(m, "[GLOBAL] Number of MM switch: %lu\n", (unsigned long) global_stats.nr_mm_switch);
-
-   seq_printf(m, "[GLOBAL] Number of collapses: %lu\n", (unsigned long) global_stats.nr_collapses);
-   seq_printf(m, "[GLOBAL] Number of ping pongs: %lu\n", (unsigned long) global_stats.nr_pingpong);
-   seq_printf(m, "[GLOBAL] Number of reverted replication decisions: %lu\n", (unsigned long) global_stats.nr_replicated_decisions_reverted);
-   seq_printf(m, "[GLOBAL] Number of replicated pages: %lu\n", (unsigned long) global_stats.nr_replicated_pages);
-   seq_printf(m, "[GLOBAL] Number of ignored orders: %lu\n", (unsigned long) global_stats.nr_ignored_orders);
+   seq_printf(m, "[GLOBAL] Number of MM switch: %lu\n", (unsigned long) global_stats->nr_mm_switch);
+   seq_printf(m, "[GLOBAL] Number of collapses: %lu\n", (unsigned long) global_stats->nr_collapses);
+   seq_printf(m, "[GLOBAL] Number of ping pongs: %lu\n", (unsigned long) global_stats->nr_pingpong);
+   seq_printf(m, "[GLOBAL] Number of reverted replication decisions: %lu\n", (unsigned long) global_stats->nr_replicated_decisions_reverted);
+   seq_printf(m, "[GLOBAL] Number of replicated pages: %lu\n", (unsigned long) global_stats->nr_replicated_pages);
+   seq_printf(m, "[GLOBAL] Number of ignored orders: %lu\n\n", (unsigned long) global_stats->nr_ignored_orders);
 
    seq_printf(m, "[GLOBAL] Time spent acquiring read locks: %lu cycles\n", time_rd_lock);
    seq_printf(m, "[GLOBAL] Time spent acquiring write locks: %lu cycles\n", time_wr_lock);
-   seq_printf(m, "[GLOBAL] Time spent acquiring locks (global): %lu cycles\n", time_lock);
+   seq_printf(m, "[GLOBAL] Time spent acquiring locks (global): %lu cycles\n\n", time_lock);
 
-   seq_printf(m, "[GLOBAL] Number of page faults: %lu\n", (unsigned long) global_stats.nr_pgfault);
-   seq_printf(m, "[GLOBAL] Time spent in the page fault handler: %lu cycles\n", time_pgfault);
+   seq_printf(m, "[GLOBAL] Number of page faults: %lu\n", (unsigned long) global_stats->nr_pgfault);
+   seq_printf(m, "[GLOBAL] Time spent in the page fault handler: %lu cycles\n\n", time_pgfault);
 
-   seq_printf(m, "[GLOBAL] Number of migrations: %lu\n", (unsigned long) global_stats.nr_migrations);
-   seq_printf(m, "[GLOBAL] Number of pages freed (i.e, approx. total number of pages): %lu\n", (unsigned long) global_stats.nr_pages_freed);
-   seq_printf(m, "[GLOBAL] Number of pages migrated at least once: %lu\n", (unsigned long) global_stats.nr_pages_migrated_at_least_once);
-   seq_printf(m, "[GLOBAL] Number of migrations (check): %lu\n", (unsigned long) global_stats.nr_migrations_per_page);
-   seq_printf(m, "[GLOBAL] Max number of migrations per page: %lu\n", (unsigned long) global_stats.max_nr_migrations_per_page);
+   seq_printf(m, "[GLOBAL] 4k pages:\n");
+   seq_printf(m, "[GLOBAL] Number of pages freed (i.e, approx. total number of pages): %lu\n", (unsigned long) global_stats->nr_4k_pages_freed);
+   seq_printf(m, "[GLOBAL] Number of pages migrated at least once: %lu\n", (unsigned long) global_stats->nr_4k_pages_migrated_at_least_once);
+   seq_printf(m, "[GLOBAL] Max number of migrations per page: %lu\n", (unsigned long) global_stats->max_nr_migrations_per_4k_page);
+
+   for(i = 0; i < num_online_nodes(); i++) {
+      seq_printf(m, "[GLOBAL] Moved pages from node %d: ", i);
+      for(j = 0; j < num_online_nodes(); j++) {
+         seq_printf(m,"%lu\t", (unsigned long) global_stats->migr_4k_from_to_node[i][j]);
+
+         nr_migrations += global_stats->migr_4k_from_to_node[i][j];
+      }
+      seq_printf(m, "\n");
+   }
+   seq_printf(m, "[GLOBAL] Number of migrations: %lu\n\n", nr_migrations);
+
+   seq_printf(m, "[GLOBAL] 2M pages:\n");
+   nr_migrations = 0;
+   for(i = 0; i < num_online_nodes(); i++) {
+      seq_printf(m, "[GLOBAL] Moved pages from node %d: ", i);
+      for(j = 0; j < num_online_nodes(); j++) {
+         seq_printf(m,"%lu\t", (unsigned long) global_stats->migr_2M_from_to_node[i][j]);
+
+         nr_migrations += global_stats->migr_2M_from_to_node[i][j];
+      }
+      seq_printf(m, "\n");
+   }
+   seq_printf(m, "[GLOBAL] Number of migrations: %lu\n", nr_migrations);
+
+   kfree(global_stats);
 
    write_unlock(&reset_stats_rwl);
    return 0;
@@ -1157,10 +1134,11 @@ int check_pgd_consistency(struct mm_struct *mm) {
    struct vm_area_struct *vma;
    int node;
    pte_t *pte_master;
-   spinlock_t *ptl_master;
+   spinlock_t *ptl_master = NULL;
 
    if(!is_replicated(mm)) {
       DEBUG_WARNING("Don't need to check the consistency if the pgd has not been replicated!\n");
+      return 0;
    }
 
    for(vma = mm->mmap; vma; vma = vma->vm_next) {

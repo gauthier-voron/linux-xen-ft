@@ -164,7 +164,9 @@ static inline unsigned long get_pa_from_va (pgd_t * pgd, struct vm_area_struct *
 
 
 #if ENABLE_STATS
-typedef struct {
+// WARNING: We use automerging for stats
+// You MUST use only uint64_t types
+typedef struct __attribute__((packed)) {
    uint64_t nr_mm_switch;
 
    uint64_t nr_collapses;
@@ -182,13 +184,13 @@ typedef struct {
    uint64_t nr_pingpong;
    uint64_t nr_replicated_decisions_reverted;
 
-#if ENABLE_MIGRATION_STATS
-   uint64_t nr_migrations;
-   uint64_t nr_pages_freed;
-   uint64_t nr_pages_migrated_at_least_once;
-   uint64_t nr_migrations_per_page;
-   uint64_t max_nr_migrations_per_page;
-#endif
+   uint64_t migr_4k_from_to_node[MAX_NUMNODES][MAX_NUMNODES];
+   uint64_t migr_2M_from_to_node[MAX_NUMNODES][MAX_NUMNODES];
+
+   uint64_t nr_4k_pages_freed;
+   uint64_t nr_4k_pages_migrated_at_least_once;
+
+   uint64_t max_nr_migrations_per_4k_page;
 } replication_stats_t;
 
 extern rwlock_t reset_stats_rwl;

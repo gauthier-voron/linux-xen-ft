@@ -5,15 +5,15 @@ struct carrefour_options_t {
    int page_bouncing_fix;
    int use_balance_numa_api;
    int use_balance_numa_rate_limit;
+   int sync_thp_migration;
 };
 extern struct carrefour_options_t carrefour_options;
 
 struct carrefour_hook_stats_t {
-   unsigned real_nb_migrations;
-   unsigned migr_from_to_node[MAX_NUMNODES][MAX_NUMNODES];
    u64 time_spent_in_migration;
    u32 s_migrate_nb_calls;
 };
+extern struct carrefour_hook_stats_t carrefour_hook_stats;
 
 // These are our custom errors
 #define EPAGENOTFOUND   65

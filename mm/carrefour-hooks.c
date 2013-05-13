@@ -208,9 +208,7 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
       if(use_balance_numa_api) {
          if(migrate_misplaced_page(page, nodes[i])) {
             //__DEBUG("Migrating page 0x%lx\n", addr);
-
-            carrefour_hook_stats.migr_from_to_node[current_node][nodes[i]]++;
-            carrefour_hook_stats.real_nb_migrations++;
+            INCR_REP_STAT_VALUE(migr_4k_from_to_node[current_node][nodes[i]], 1);
          }
          else {
             //DEBUG_WARNING("[WARNING] Migration of page 0x%lx failed !\n", addr);
@@ -224,8 +222,7 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
             inc_zone_page_state(page, NR_ISOLATED_ANON + page_is_file_cache(page));
 
             /** Not very precise because migration can fail **/
-            carrefour_hook_stats.migr_from_to_node[current_node][nodes[i]]++;
-            carrefour_hook_stats.real_nb_migrations++;
+            INCR_REP_STAT_VALUE(migr_4k_from_to_node[current_node][nodes[i]], 1);
          }
          else {
             //DEBUG_WARNING("[WARNING] Migration of page 0x%lx failed !\n", addr);
@@ -331,8 +328,7 @@ int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * 
                printk("[WARNING] Migration of page 0x%lx failed !\n", addr);
             }
             else {
-               carrefour_hook_stats.migr_from_to_node[current_node][nodes[i]]++;
-               carrefour_hook_stats.real_nb_migrations++;
+               INCR_REP_STAT_VALUE(migr_2M_from_to_node[current_node][nodes[i]], 1);
             }
          }
       }
@@ -521,37 +517,47 @@ int find_and_migrate_thp(int pid, unsigned long addr, int to_node) {
 		goto out_locked;
 	}
 
+   page->dest_node = to_node;
+
    // Make sure that pmd is tagged as "NUMA"
    orig_pmd = pmd_mknuma(orig_pmd);
    set_pmd_at(mm, addr & PMD_MASK, pmd, orig_pmd);
    
+   /** FGAUD: We need to flush the TLB, don't we ? **/
+   flush_tlb_page(vma, addr);
+
 	spin_unlock(&mm->page_table_lock);
 
-	/* Migrate the THP to the requested node */
-	ret = migrate_misplaced_transhuge_page(mm, vma, pmd, orig_pmd, addr, page, to_node);
+   if(carrefour_options.sync_thp_migration) {
+      /* Migrate the THP to the requested node */
+      ret = migrate_misplaced_transhuge_page(mm, vma, pmd, orig_pmd, addr, page, to_node);
 
-	if (ret > 0) {
-      //__DEBUG("Migrated THP 0x%lx successfully\n", addr);
-      carrefour_hook_stats.migr_from_to_node[current_node][to_node]++;
-      carrefour_hook_stats.real_nb_migrations++;
-      ret = 0;
+      if (ret > 0) {
+         //__DEBUG("Migrated THP 0x%lx successfully\n", addr);
+         ret = 0;
+      }
+      else {
+         //__DEBUG("Failed migrating THP 0x%lx (ret = %d)\n", addr, ret);
+         ret = -1;
+         // put page has been performed by migrate_misplaced_transhuge_page
+
+         // It failed
+         // We need to clear the pmd_numa_flag ...   
+         spin_lock(&mm->page_table_lock);
+         if (pmd_same(orig_pmd, *pmd)) {
+            orig_pmd = pmd_mknonnuma(orig_pmd);
+            set_pmd_at(mm, addr, pmd, orig_pmd);
+            VM_BUG_ON(pmd_numa(*pmd));
+            update_mmu_cache_pmd(vma, addr, pmd);
+         }
+         spin_unlock(&mm->page_table_lock);
+      }
    }
    else {
-      //__DEBUG("Failed migrating THP 0x%lx (ret = %d)\n", addr, ret);
-      ret = -1;
-      // put page has been performed by migrate_misplaced_transhuge_page
-      
-      // It failed
-      // We need to clear the pmd_numa_flag ...   
-      spin_lock(&mm->page_table_lock);
-      if (pmd_same(orig_pmd, *pmd)) {
-         orig_pmd = pmd_mknonnuma(orig_pmd);
-         set_pmd_at(mm, addr, pmd, orig_pmd);
-         VM_BUG_ON(pmd_numa(*pmd));
-         update_mmu_cache_pmd(vma, addr, pmd);
-      }
-      spin_unlock(&mm->page_table_lock);
-	}
+      ret = 0;
+      unlock_page(page);
+      put_page(page);
+   }
 
 out_locked:
    //printk("[Core %d, PID %d] Releasing mm lock (0x%p)\n", smp_processor_id(), pid, &mm->mmap_sem);

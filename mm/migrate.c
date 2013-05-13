@@ -1040,7 +1040,6 @@ int migrate_pages(struct list_head *from, new_page_t get_new_page,
 				break;
 			case MIGRATEPAGE_SUCCESS:
 				nr_succeeded++;
-            INCR_REP_STAT_VALUE(nr_migrations, 1);
 				break;
 			default:
 				/* Permanent failure */
@@ -1676,6 +1675,9 @@ int migrate_misplaced_transhuge_page(struct mm_struct *mm,
 	struct mem_cgroup *memcg = NULL;
 	int page_lru = page_is_file_cache(page);
 
+   /** FGAUD **/
+	int current_node = page_to_nid(page);
+
 	/*
 	 * Don't migrate pages that are mapped in multiple processes.
 	 * TODO: Handle false sharing detection instead of this hammer
@@ -1737,9 +1739,6 @@ int migrate_misplaced_transhuge_page(struct mm_struct *mm,
 		goto out;
 	}
 
-   /** FGAUD: We need to flush the TLB, don't we ? **/
-   flush_tlb_page(vma, haddr);
-
 	/*
 	 * Traditional migration needs to prepare the memcg charge
 	 * transaction early to prevent the old page from being
@@ -1774,6 +1773,9 @@ int migrate_misplaced_transhuge_page(struct mm_struct *mm,
 
 	count_vm_events(PGMIGRATE_SUCCESS, HPAGE_PMD_NR);
 	count_vm_numa_events(NUMA_PAGE_MIGRATE, HPAGE_PMD_NR);
+
+   /** FGAUD: Stats **/
+   INCR_REP_STAT_VALUE(migr_2M_from_to_node[current_node][node], 1);
 
 out:
 	mod_zone_page_state(page_zone(page),

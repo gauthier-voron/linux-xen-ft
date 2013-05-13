@@ -201,6 +201,9 @@ struct page {
 
    /** Used for some types of collapses **/
    perpage_stats_t stats;
+
+   /** Used to know where to migrate the page **/
+   int dest_node;
 }
 /*
  * The struct page can be forced to be double word aligned so that atomic ops
