@@ -434,7 +434,7 @@ int find_and_migrate_thp(int pid, unsigned long addr, int to_node) {
    struct mm_struct *mm = NULL;
    struct vm_area_struct *vma;
    struct page *page;
-   int ret = -1;
+   int ret = -EAGAIN;
    int current_node;
 
    pgd_t *pgd;
@@ -501,6 +501,7 @@ int find_and_migrate_thp(int pid, unsigned long addr, int to_node) {
    if(current_node == to_node) {
 		put_page(page);
       spin_unlock(&mm->page_table_lock);
+      ret = -ENOTMISPLACED;
 		goto out_locked;
    }
 	spin_unlock(&mm->page_table_lock);
@@ -516,6 +517,15 @@ int find_and_migrate_thp(int pid, unsigned long addr, int to_node) {
       spin_unlock(&mm->page_table_lock);
 		goto out_locked;
 	}
+
+   if(carrefour_options.page_bouncing_fix && (page->stats.nr_migrations >= carrefour_options.page_bouncing_fix)) {
+		unlock_page(page);
+		put_page(page);
+      spin_unlock(&mm->page_table_lock);
+      ret = -EBOUNCINGFIX;
+		goto out_locked;
+   }
+
 
    page->dest_node = to_node;
 

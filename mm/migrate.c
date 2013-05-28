@@ -1755,6 +1755,11 @@ int migrate_misplaced_transhuge_page(struct mm_struct *mm,
 
 	page_add_new_anon_rmap(new_page, vma, haddr);
 
+#if ENABLE_MIGRATION_STATS
+   new_page->stats = page->stats;
+   new_page->stats.nr_migrations++;
+#endif
+
 	set_pmd_at(mm, haddr, pmd, entry);
 	update_mmu_cache_pmd(vma, address, &entry);
 	page_remove_rmap(page);

@@ -19,6 +19,8 @@ extern struct carrefour_hook_stats_t carrefour_hook_stats;
 #define EPAGENOTFOUND   65
 #define EREPLICATEDPAGE 66
 #define EINVALIDPAGE    67
+#define ENOTMISPLACED   68
+#define EBOUNCINGFIX    69
 
 // Returns 0 if the page is present, -<error> otherwise
 // If the page is a regular huge page huge = 1, huge = 2 if it is a THP, huge = 0 otherwise

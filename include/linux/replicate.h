@@ -189,8 +189,11 @@ typedef struct __attribute__((packed)) {
 
    uint64_t nr_4k_pages_freed;
    uint64_t nr_4k_pages_migrated_at_least_once;
-
    uint64_t max_nr_migrations_per_4k_page;
+
+   uint64_t nr_2M_pages_freed;
+   uint64_t nr_2M_pages_migrated_at_least_once;
+   uint64_t max_nr_migrations_per_2M_page;
 } replication_stats_t;
 
 extern rwlock_t reset_stats_rwl;

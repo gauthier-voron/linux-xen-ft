@@ -775,6 +775,10 @@ static int display_replication_stats(struct seq_file *m, void* v)
    seq_printf(m, "[GLOBAL] Number of migrations: %lu\n\n", nr_migrations);
 
    seq_printf(m, "[GLOBAL] 2M pages:\n");
+   seq_printf(m, "[GLOBAL] Number of pages freed (i.e, approx. total number of pages): %lu\n", (unsigned long) global_stats->nr_2M_pages_freed);
+   seq_printf(m, "[GLOBAL] Number of pages migrated at least once: %lu\n", (unsigned long) global_stats->nr_2M_pages_migrated_at_least_once);
+   seq_printf(m, "[GLOBAL] Max number of migrations per page: %lu\n", (unsigned long) global_stats->max_nr_migrations_per_2M_page);
+
    nr_migrations = 0;
    for(i = 0; i < num_online_nodes(); i++) {
       seq_printf(m, "[GLOBAL] Moved pages from node %d: ", i);

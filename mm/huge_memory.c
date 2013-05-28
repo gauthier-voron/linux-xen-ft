@@ -26,6 +26,8 @@
 #include <asm/pgalloc.h>
 #include "internal.h"
 
+#include <linux/replicate.h>
+
 /*
  * By default transparent hugepage support is enabled for all mappings
  * and khugepaged scans all mappings. Defrag is only invoked by
@@ -1376,6 +1378,27 @@ int zap_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
 			put_huge_zero_page();
 		} else {
 			page = pmd_page(orig_pmd);
+
+#if ENABLE_MIGRATION_STATS
+         {
+            replication_stats_t* stats;
+            read_lock(&reset_stats_rwl);
+            stats = get_cpu_ptr(&replication_stats_per_core);
+            stats->nr_2M_pages_freed++;
+
+            if(page->stats.nr_migrations) {
+               stats->nr_2M_pages_migrated_at_least_once++;
+            }
+
+            if(page->stats.nr_migrations > stats->max_nr_migrations_per_2M_page) {
+               stats->max_nr_migrations_per_2M_page = page->stats.nr_migrations;
+            }
+
+            put_cpu_ptr(&replication_stats_per_core);
+            read_unlock(&reset_stats_rwl);
+         }
+#endif
+
 			page_remove_rmap(page);
 			VM_BUG_ON(page_mapcount(page) < 0);
 			add_mm_counter(tlb->mm, MM_ANONPAGES, -HPAGE_PMD_NR);
