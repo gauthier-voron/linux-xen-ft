@@ -2511,6 +2511,10 @@ static int khugepaged_scan_pmd(struct mm_struct *mm,
             DEBUG_PANIC("Wow, node %d should not exist!\n", node);
          }
       }
+      else {
+         if (node == NUMA_NO_NODE)
+            node = page_to_nid(page);
+      }
 		
       VM_BUG_ON(PageCompound(page));
 		if (!PageLRU(page) || PageLocked(page) || !PageAnon(page))
