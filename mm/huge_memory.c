@@ -28,6 +28,10 @@
 
 #include <linux/replicate.h>
 
+/* JRF */
+#include <linux/module.h>
+#include <linux/debugfs.h>
+
 /*
  * By default transparent hugepage support is enabled for all mappings
  * and khugepaged scans all mappings. Defrag is only invoked by
@@ -63,6 +67,13 @@ static DECLARE_WAIT_QUEUE_HEAD(khugepaged_wait);
  * fault.
  */
 static unsigned int khugepaged_max_ptes_none __read_mostly = HPAGE_PMD_NR-1;
+
+/* JRF */
+static u32 nathp_node_threshold = 512, nathp_enabled = 0;
+static u32 nathp_khugepaged_scan_millisec = 10;
+
+static struct dentry *dfs_dir_entry;
+static struct dentry *dfs_threshold_entry, *dfs_enable_entry, *dfs_nathp_khugepaged_scan_millisec;
 
 static int khugepaged(void *none);
 static int khugepaged_slab_init(void);
@@ -617,6 +628,45 @@ static inline void hugepage_exit_sysfs(struct kobject *hugepage_kobj)
 }
 #endif /* CONFIG_SYSFS */
 
+/** FGAUD **/
+static int dfs_nathp_u32_get(void *data, u64 *val) {
+   *val = *(u32 *)data;
+   return 0;
+}
+
+static int dfs_nathp_u32_set(void *data, u64 val) {
+   *(u32 *)data = val;
+
+   if(data == &nathp_khugepaged_scan_millisec) {
+      khugepaged_scan_sleep_millisecs = nathp_khugepaged_scan_millisec;
+   }
+   else if (data == &nathp_enabled) {
+      if(nathp_enabled) {
+         khugepaged_scan_sleep_millisecs = nathp_khugepaged_scan_millisec;
+      }
+      else {
+         khugepaged_scan_sleep_millisecs = 10000; // Default value, todo: store it somewhere
+      }
+   }
+
+   printk("NATHP: period = %u ms, node threshold = %u, enabled = %u\n", khugepaged_scan_sleep_millisecs, nathp_node_threshold, nathp_enabled);
+
+	wake_up_interruptible(&khugepaged_wait);
+   return 0;
+}
+DEFINE_SIMPLE_ATTRIBUTE(fops_nathp_u32, dfs_nathp_u32_get, dfs_nathp_u32_set, "%llu\n");
+
+static void __init_dfs(void) {
+   /* JRF */
+   dfs_dir_entry = debugfs_create_dir("nathp", NULL);
+   BUG_ON(dfs_dir_entry == NULL || (long) dfs_dir_entry == -ENODEV);
+
+   dfs_threshold_entry = debugfs_create_file("node_threshold", 0666, dfs_dir_entry, &nathp_node_threshold, &fops_nathp_u32);
+   dfs_enable_entry = debugfs_create_file("enabled", 0666, dfs_dir_entry, &nathp_enabled, &fops_nathp_u32);
+   dfs_nathp_khugepaged_scan_millisec = debugfs_create_file("default_khugepaged_scan_sleep_millisecs", 0666, dfs_dir_entry, &nathp_khugepaged_scan_millisec, &fops_nathp_u32);
+}
+/** END **/
+
 static int __init hugepage_init(void)
 {
 	int err;
@@ -644,6 +694,8 @@ static int __init hugepage_init(void)
 	 */
 	if (totalram_pages < (512 << (20 - PAGE_SHIFT)))
 		transparent_hugepage_flags = 0;
+
+   __init_dfs();
 
 	start_khugepaged();
 
@@ -794,6 +846,13 @@ int do_huge_pmd_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 			return VM_FAULT_OOM;
 		if (unlikely(khugepaged_enter(vma)))
 			return VM_FAULT_OOM;
+
+      /* JRF */
+      if(nathp_enabled) {
+         /* Only use fallback path */
+         goto out;
+      }
+
 		if (!(flags & FAULT_FLAG_WRITE) &&
 				transparent_hugepage_use_zero_page()) {
 			pgtable_t pgtable;
@@ -2407,6 +2466,12 @@ static int khugepaged_scan_pmd(struct mm_struct *mm,
 	spinlock_t *ptl;
 	int node = NUMA_NO_NODE;
 
+   /*JRF*/
+   unsigned int node_count[MAX_NUMNODES];
+
+   memset(node_count, 0, num_online_nodes() * sizeof(unsigned int)); 
+   //
+
 	VM_BUG_ON(address & ~HPAGE_PMD_MASK);
 
 	pmd = mm_find_pmd(mm, address);
@@ -2435,9 +2500,19 @@ static int khugepaged_scan_pmd(struct mm_struct *mm,
 		 * be more sophisticated and look at more pages,
 		 * but isn't for now.
 		 */
-		if (node == NUMA_NO_NODE)
-			node = page_to_nid(page);
-		VM_BUG_ON(PageCompound(page));
+
+      /* JRF */
+      if(nathp_enabled) {
+         node = page_to_nid(page);
+         if(node >= 0 && node < num_online_nodes()) {
+            node_count[node] += 1;
+         }
+         else {
+            DEBUG_PANIC("Wow, node %d should not exist!\n", node);
+         }
+      }
+		
+      VM_BUG_ON(PageCompound(page));
 		if (!PageLRU(page) || PageLocked(page) || !PageAnon(page))
 			goto out_unmap;
 		/* cannot use mapcount: can't collapse if there's a gup pin */
@@ -2447,6 +2522,25 @@ static int khugepaged_scan_pmd(struct mm_struct *mm,
 		    mmu_notifier_test_young(vma->vm_mm, address))
 			referenced = 1;
 	}
+
+   /* JRF */
+   if(nathp_enabled) {
+      unsigned int i, max_count = 0, max_node = 0;
+
+      for(i=0; i<num_online_nodes(); ++i) {
+         if(node_count[i] > max_count) {
+            max_count = node_count[i];
+            max_node = i;
+         }
+      }
+      if(max_count >= nathp_node_threshold) {
+         node = max_node;
+      }
+      else {
+         goto out_unmap;
+      }
+   }
+
 	if (referenced)
 		ret = 1;
 out_unmap:
