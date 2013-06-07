@@ -69,11 +69,28 @@ static DECLARE_WAIT_QUEUE_HEAD(khugepaged_wait);
 static unsigned int khugepaged_max_ptes_none __read_mostly = HPAGE_PMD_NR-1;
 
 /* JRF */
-static u32 nathp_node_threshold = 512, nathp_enabled = 0;
-static u32 nathp_khugepaged_scan_millisec = 10;
+static struct {
+   u32 enabled;
+   u32 node_threshold;
+   u32 default_khugepaged_scan_millisec;
+   u32 rr_alloc;
+   u32 fake;
+} nathp_parameters = {
+   .enabled                            = 0,
+   .node_threshold                     = 512,
+   .default_khugepaged_scan_millisec   = 10,
+   .rr_alloc                           = 0,
+   .fake                               = 0,
+};
 
-static struct dentry *dfs_dir_entry;
-static struct dentry *dfs_threshold_entry, *dfs_enable_entry, *dfs_nathp_khugepaged_scan_millisec;
+static struct {
+   struct dentry *dir_entry;
+   struct dentry *enabled;
+   struct dentry *node_threshold;
+   struct dentry *default_khugepaged_scan_millisec;
+   struct dentry *rr_alloc;
+   struct dentry *fake;
+} nathp_dfs_entries;
 
 static int khugepaged(void *none);
 static int khugepaged_slab_init(void);
@@ -637,19 +654,21 @@ static int dfs_nathp_u32_get(void *data, u64 *val) {
 static int dfs_nathp_u32_set(void *data, u64 val) {
    *(u32 *)data = val;
 
-   if(data == &nathp_khugepaged_scan_millisec) {
-      khugepaged_scan_sleep_millisecs = nathp_khugepaged_scan_millisec;
+   if(data == &nathp_parameters.default_khugepaged_scan_millisec) {
+      khugepaged_scan_sleep_millisecs = nathp_parameters.default_khugepaged_scan_millisec;
    }
-   else if (data == &nathp_enabled) {
-      if(nathp_enabled) {
-         khugepaged_scan_sleep_millisecs = nathp_khugepaged_scan_millisec;
+   else if (data == &nathp_parameters.enabled) {
+      if(nathp_parameters.enabled) {
+         khugepaged_scan_sleep_millisecs = nathp_parameters.default_khugepaged_scan_millisec;
       }
       else {
          khugepaged_scan_sleep_millisecs = 10000; // Default value, todo: store it somewhere
       }
    }
 
-   printk("NATHP: period = %u ms, node threshold = %u, enabled = %u\n", khugepaged_scan_sleep_millisecs, nathp_node_threshold, nathp_enabled);
+   printk("NATHP: enabled = %u, period = %u ms, node threshold = %u, rr_alloc = %u, fake = %u\n",
+         nathp_parameters.enabled, nathp_parameters.default_khugepaged_scan_millisec, nathp_parameters.node_threshold, nathp_parameters.rr_alloc,
+         nathp_parameters.fake);
 
 	wake_up_interruptible(&khugepaged_wait);
    return 0;
@@ -658,12 +677,24 @@ DEFINE_SIMPLE_ATTRIBUTE(fops_nathp_u32, dfs_nathp_u32_get, dfs_nathp_u32_set, "%
 
 static void __init_dfs(void) {
    /* JRF */
-   dfs_dir_entry = debugfs_create_dir("nathp", NULL);
-   BUG_ON(dfs_dir_entry == NULL || (long) dfs_dir_entry == -ENODEV);
+   nathp_dfs_entries.dir_entry = debugfs_create_dir("nathp", NULL);
+   BUG_ON(nathp_dfs_entries.dir_entry == NULL || (long) nathp_dfs_entries.dir_entry == -ENODEV);
 
-   dfs_threshold_entry = debugfs_create_file("node_threshold", 0666, dfs_dir_entry, &nathp_node_threshold, &fops_nathp_u32);
-   dfs_enable_entry = debugfs_create_file("enabled", 0666, dfs_dir_entry, &nathp_enabled, &fops_nathp_u32);
-   dfs_nathp_khugepaged_scan_millisec = debugfs_create_file("default_khugepaged_scan_sleep_millisecs", 0666, dfs_dir_entry, &nathp_khugepaged_scan_millisec, &fops_nathp_u32);
+   nathp_dfs_entries.node_threshold = 
+      debugfs_create_file("node_threshold", 0666, nathp_dfs_entries.dir_entry, &nathp_dfs_entries.node_threshold, &fops_nathp_u32);
+
+   nathp_dfs_entries.enabled = 
+      debugfs_create_file("enabled", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.enabled, &fops_nathp_u32);
+
+   nathp_dfs_entries.default_khugepaged_scan_millisec = 
+      debugfs_create_file("default_khugepaged_scan_sleep_millisecs", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.default_khugepaged_scan_millisec, &fops_nathp_u32);
+
+   nathp_dfs_entries.rr_alloc = 
+      debugfs_create_file("rr_alloc", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.rr_alloc, &fops_nathp_u32);
+  
+   nathp_dfs_entries.fake = 
+      debugfs_create_file("fake", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.fake, &fops_nathp_u32);
+
 }
 /** END **/
 
@@ -848,7 +879,7 @@ int do_huge_pmd_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 			return VM_FAULT_OOM;
 
       /* JRF */
-      if(nathp_enabled) {
+      if(nathp_parameters.enabled) {
          /* Only use fallback path */
          goto out;
       }
@@ -2443,6 +2474,8 @@ static void collapse_huge_page(struct mm_struct *mm,
 
 	*hpage = NULL;
 
+   //printk("Collapsed a new huge (0x%lx) page on node %d\n", address, node);
+
 	khugepaged_pages_collapsed++;
 out_up_write:
 	up_write(&mm->mmap_sem);
@@ -2468,6 +2501,7 @@ static int khugepaged_scan_pmd(struct mm_struct *mm,
 
    /*JRF*/
    unsigned int node_count[MAX_NUMNODES];
+   static unsigned int next_node = 0;
 
    memset(node_count, 0, num_online_nodes() * sizeof(unsigned int)); 
    //
@@ -2502,7 +2536,7 @@ static int khugepaged_scan_pmd(struct mm_struct *mm,
 		 */
 
       /* JRF */
-      if(nathp_enabled) {
+      if(nathp_parameters.enabled) {
          node = page_to_nid(page);
          if(node >= 0 && node < num_online_nodes()) {
             node_count[node] += 1;
@@ -2528,7 +2562,7 @@ static int khugepaged_scan_pmd(struct mm_struct *mm,
 	}
 
    /* JRF */
-   if(nathp_enabled) {
+   if(nathp_parameters.enabled) {
       unsigned int i, max_count = 0, max_node = 0;
 
       for(i=0; i<num_online_nodes(); ++i) {
@@ -2537,8 +2571,14 @@ static int khugepaged_scan_pmd(struct mm_struct *mm,
             max_node = i;
          }
       }
-      if(max_count >= nathp_node_threshold) {
-         node = max_node;
+      if(max_count >= nathp_parameters.node_threshold) {
+         if(nathp_parameters.rr_alloc) {
+            node = next_node;
+            next_node = (next_node + 1) % num_online_nodes();
+         }
+         else {
+            node = max_node;
+         }
       }
       else {
          goto out_unmap;
@@ -2549,6 +2589,11 @@ static int khugepaged_scan_pmd(struct mm_struct *mm,
 		ret = 1;
 out_unmap:
 	pte_unmap_unlock(pte, ptl);
+
+   if(nathp_parameters.fake) {
+      goto out;
+   }
+
 	if (ret)
 		/* collapse_huge_page will return with the mmap_sem released */
 		collapse_huge_page(mm, address, hpage, vma, node);
