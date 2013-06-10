@@ -681,7 +681,7 @@ static void __init_dfs(void) {
    BUG_ON(nathp_dfs_entries.dir_entry == NULL || (long) nathp_dfs_entries.dir_entry == -ENODEV);
 
    nathp_dfs_entries.node_threshold = 
-      debugfs_create_file("node_threshold", 0666, nathp_dfs_entries.dir_entry, &nathp_dfs_entries.node_threshold, &fops_nathp_u32);
+      debugfs_create_file("node_threshold", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.node_threshold, &fops_nathp_u32);
 
    nathp_dfs_entries.enabled = 
       debugfs_create_file("enabled", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.enabled, &fops_nathp_u32);
