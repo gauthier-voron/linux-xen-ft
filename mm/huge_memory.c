@@ -667,7 +667,7 @@ static int dfs_nathp_u32_set(void *data, u64 val) {
    }
 
    printk("NATHP: enabled = %u, period = %u ms, node threshold = %u, rr_alloc = %u, fake = %u\n",
-         nathp_parameters.enabled, nathp_parameters.default_khugepaged_scan_millisec, nathp_parameters.node_threshold, nathp_parameters.rr_alloc,
+         nathp_parameters.enabled, khugepaged_scan_sleep_millisecs, nathp_parameters.node_threshold, nathp_parameters.rr_alloc,
          nathp_parameters.fake);
 
 	wake_up_interruptible(&khugepaged_wait);
