@@ -106,6 +106,8 @@ static struct {
 
    u64 nr_khugepaged_loops;
    u64 nr_collapses[MAX_NUMNODES];
+   u64 nr_collapse_calls;
+   u64 collapse_aggregate_duration;
 } nathp_stats;
 
 static int khugepaged(void *none);
@@ -2645,9 +2647,17 @@ static int khugepaged_scan_pmd(struct mm_struct *mm,
 out_unmap:
 	pte_unmap_unlock(pte, ptl);
 
-	if (ret)
+	if (ret) {
+      u64 start, stop;
+      rdtscll(start);
+
 		/* collapse_huge_page will return with the mmap_sem released */
 		collapse_huge_page(mm, address, hpage, vma, node);
+
+      rdtscll(stop);
+      nathp_stats.collapse_aggregate_duration += stop - start;
+      nathp_stats.nr_collapse_calls++;
+   }
 out:
 	return ret;
 }
@@ -2890,11 +2900,10 @@ static int khugepaged(void *none)
             for(i = 0; i < num_online_nodes(); i++) {
                printk(" %llu", nathp_stats.nr_collapses[i]); 
             }
-            printk(" ]\n");
-            
-            nathp_stats.nr_khugepaged_loops = 0;
+            printk(" ] -- %llu collapse calls, %llu avg. cycles\n", nathp_stats.nr_collapse_calls, nathp_stats.nr_collapse_calls ? nathp_stats.collapse_aggregate_duration / nathp_stats.nr_collapse_calls : 0);
+           
+            memset(&nathp_stats, 0, sizeof(nathp_stats)); 
             nathp_stats.last_time = current_time;
-            memset(&nathp_stats.nr_collapses, 0, sizeof(nathp_stats.nr_collapses));
          }
       }
 	}
