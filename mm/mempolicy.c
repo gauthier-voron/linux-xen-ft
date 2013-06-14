@@ -2008,9 +2008,16 @@ retry_cpuset:
 
 		return page;
 	}
-	page = __alloc_pages_nodemask(gfp, order,
-				      policy_zonelist(gfp, pol, node),
-				      policy_nodemask(gfp, pol));
+   /* BLEPERS: ignore mempolicy for HUGE PAGES */
+   if(order == HPAGE_PMD_ORDER) {
+      page = __alloc_pages_nodemask(gfp, order,
+                     node_zonelist(node, gfp),
+                     policy_nodemask(gfp, pol));
+   } else {
+      page = __alloc_pages_nodemask(gfp, order,
+                     policy_zonelist(gfp, pol, node),
+                     policy_nodemask(gfp, pol));
+   }
 	if (unlikely(mpol_needs_cond_ref(pol)))
 		__mpol_put(pol);
 	if (unlikely(!put_mems_allowed(cpuset_mems_cookie) && !page))
