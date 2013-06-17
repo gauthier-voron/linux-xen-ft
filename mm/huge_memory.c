@@ -75,12 +75,14 @@ static struct {
    u32 default_khugepaged_scan_millisec;
    u32 rr_alloc;
    u32 fake;
+   u32 alloc_huge;
 } nathp_parameters = {
    .enabled                            = 0,
    .node_threshold                     = 512,
    .default_khugepaged_scan_millisec   = 10,
    .rr_alloc                           = 0,
    .fake                               = 0,
+   .alloc_huge                         = 0,
 };
 
 static struct {
@@ -666,9 +668,9 @@ static int dfs_nathp_u32_set(void *data, u64 val) {
       }
    }
 
-   printk("NATHP: enabled = %u, period = %u ms, node threshold = %u, rr_alloc = %u, fake = %u\n",
+   printk("NATHP: enabled = %u, period = %u ms, node threshold = %u, rr_alloc = %u, fake = %u, alloc_huge = %u\n",
          nathp_parameters.enabled, nathp_parameters.default_khugepaged_scan_millisec, nathp_parameters.node_threshold, nathp_parameters.rr_alloc,
-         nathp_parameters.fake);
+         nathp_parameters.fake, nathp_parameters.alloc_huge);
 
 	wake_up_interruptible(&khugepaged_wait);
    return 0;
@@ -694,6 +696,9 @@ static void __init_dfs(void) {
   
    nathp_dfs_entries.fake = 
       debugfs_create_file("fake", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.fake, &fops_nathp_u32);
+
+   nathp_dfs_entries.fake = 
+      debugfs_create_file("alloc_huge", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.alloc_huge, &fops_nathp_u32);
 
 }
 /** END **/
@@ -879,7 +884,7 @@ int do_huge_pmd_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 			return VM_FAULT_OOM;
 
       /* JRF */
-      if(nathp_parameters.enabled) {
+      if(nathp_parameters.enabled && !nathp_parameters.alloc_huge) {
          /* Only use fallback path */
          goto out;
       }
