@@ -76,6 +76,9 @@ static struct {
    u32 rr_alloc;
    u32 fake;
    u32 alloc_huge;
+   u32 regular_algorithm;
+   u32 verbose;
+   u32 pin_on_node;
 } nathp_parameters = {
    .enabled                            = 0,
    .node_threshold                     = 512,
@@ -83,6 +86,9 @@ static struct {
    .rr_alloc                           = 0,
    .fake                               = 0,
    .alloc_huge                         = 0,
+   .regular_algorithm                  = 0,
+   .verbose                            = 0,
+   .pin_on_node                        = (u32) -1,
 };
 
 static struct {
@@ -92,7 +98,19 @@ static struct {
    struct dentry *default_khugepaged_scan_millisec;
    struct dentry *rr_alloc;
    struct dentry *fake;
+   struct dentry *regular_algorithm;
+   struct dentry *verbose;
+   struct dentry *pin_on_node;
 } nathp_dfs_entries;
+
+static struct {
+   u64 last_time;
+
+   u64 nr_khugepaged_loops;
+   u64 nr_collapses[MAX_NUMNODES];
+   u64 nr_collapse_calls;
+   u64 collapse_aggregate_duration;
+} nathp_stats;
 
 static int khugepaged(void *none);
 static int khugepaged_slab_init(void);
@@ -662,15 +680,38 @@ static int dfs_nathp_u32_set(void *data, u64 val) {
    else if (data == &nathp_parameters.enabled) {
       if(nathp_parameters.enabled) {
          khugepaged_scan_sleep_millisecs = nathp_parameters.default_khugepaged_scan_millisec;
+         memset(&nathp_stats, 0, sizeof(nathp_stats));
       }
       else {
          khugepaged_scan_sleep_millisecs = 10000; // Default value, todo: store it somewhere
       }
    }
+   else if (data == &nathp_parameters.pin_on_node) {
+      struct cpumask dstp;
+      cpumask_clear(&dstp);
 
-   printk("NATHP: enabled = %u, period = %u ms, node threshold = %u, rr_alloc = %u, fake = %u, alloc_huge = %u\n",
-         nathp_parameters.enabled, nathp_parameters.default_khugepaged_scan_millisec, nathp_parameters.node_threshold, nathp_parameters.rr_alloc,
-         nathp_parameters.fake, nathp_parameters.alloc_huge);
+      if (nathp_parameters.pin_on_node >= num_online_nodes()) {
+         printk("Node %d --> not valid\n", (int) nathp_parameters.pin_on_node);
+         nathp_parameters.pin_on_node = (u32) -1;
+      }
+           
+      if(nathp_parameters.pin_on_node == (u32) -1) {
+         int i;
+         for(i = 0; i < num_online_nodes(); i++) {
+            cpumask_set_cpu(i, &dstp);
+         }
+      }
+      else {
+         // FGAUD: pin thread on core 0
+         cpumask_set_cpu(nathp_parameters.pin_on_node, &dstp);
+      }
+      sched_setaffinity(khugepaged_thread->pid, &dstp);
+   }
+
+   printk("NATHP: enabled = %u, period = %u ms, node threshold = %u, rr_alloc = %u, fake = %u, regular_algorithm = %u, verbose = %u, pin_on_node = %d alloc_huge = %u\n",
+         nathp_parameters.enabled, khugepaged_scan_sleep_millisecs, nathp_parameters.node_threshold, nathp_parameters.rr_alloc,
+         nathp_parameters.fake, nathp_parameters.regular_algorithm, nathp_parameters.verbose, (int) nathp_parameters.pin_on_node,
+         nathp_parameters.alloc_huge);
 
 	wake_up_interruptible(&khugepaged_wait);
    return 0;
@@ -683,7 +724,7 @@ static void __init_dfs(void) {
    BUG_ON(nathp_dfs_entries.dir_entry == NULL || (long) nathp_dfs_entries.dir_entry == -ENODEV);
 
    nathp_dfs_entries.node_threshold = 
-      debugfs_create_file("node_threshold", 0666, nathp_dfs_entries.dir_entry, &nathp_dfs_entries.node_threshold, &fops_nathp_u32);
+      debugfs_create_file("node_threshold", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.node_threshold, &fops_nathp_u32);
 
    nathp_dfs_entries.enabled = 
       debugfs_create_file("enabled", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.enabled, &fops_nathp_u32);
@@ -699,6 +740,15 @@ static void __init_dfs(void) {
 
    nathp_dfs_entries.fake = 
       debugfs_create_file("alloc_huge", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.alloc_huge, &fops_nathp_u32);
+
+   nathp_dfs_entries.regular_algorithm = 
+      debugfs_create_file("regular_algorithm", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.regular_algorithm, &fops_nathp_u32);
+
+   nathp_dfs_entries.verbose = 
+      debugfs_create_file("verbose", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.verbose, &fops_nathp_u32);
+
+   nathp_dfs_entries.pin_on_node = 
+      debugfs_create_file("pin_on_node", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.pin_on_node, &fops_nathp_u32);
 
 }
 /** END **/
@@ -2479,7 +2529,11 @@ static void collapse_huge_page(struct mm_struct *mm,
 
 	*hpage = NULL;
 
-   //printk("Collapsed a new huge (0x%lx) page on node %d\n", address, node);
+
+   if(unlikely(nathp_parameters.verbose)) {
+      printk("Collapsed a new huge (0x%lx) page on node %d\n", address, node);
+      nathp_stats.nr_collapses[node]++;
+   }
 
 	khugepaged_pages_collapsed++;
 out_up_write:
@@ -2541,7 +2595,7 @@ static int khugepaged_scan_pmd(struct mm_struct *mm,
 		 */
 
       /* JRF */
-      if(nathp_parameters.enabled) {
+      if(nathp_parameters.enabled && !nathp_parameters.regular_algorithm) {
          node = page_to_nid(page);
          if(node >= 0 && node < num_online_nodes()) {
             node_count[node] += 1;
@@ -2567,7 +2621,7 @@ static int khugepaged_scan_pmd(struct mm_struct *mm,
 	}
 
    /* JRF */
-   if(nathp_parameters.enabled) {
+   if(nathp_parameters.enabled && !nathp_parameters.regular_algorithm) {
       unsigned int i, max_count = 0, max_node = 0;
 
       for(i=0; i<num_online_nodes(); ++i) {
@@ -2589,19 +2643,27 @@ static int khugepaged_scan_pmd(struct mm_struct *mm,
          goto out_unmap;
       }
    }
+   
+   if(nathp_parameters.fake) {
+      goto out_unmap;
+   }
 
 	if (referenced)
 		ret = 1;
 out_unmap:
 	pte_unmap_unlock(pte, ptl);
 
-   if(nathp_parameters.fake) {
-      goto out;
-   }
+	if (ret) {
+      u64 start, stop;
+      rdtscll(start);
 
-	if (ret)
 		/* collapse_huge_page will return with the mmap_sem released */
 		collapse_huge_page(mm, address, hpage, vma, node);
+
+      rdtscll(stop);
+      nathp_stats.collapse_aggregate_duration += stop - start;
+      nathp_stats.nr_collapse_calls++;
+   }
 out:
 	return ret;
 }
@@ -2805,12 +2867,51 @@ static int khugepaged(void *none)
 {
 	struct mm_slot *mm_slot;
 
+   if(nathp_parameters.pin_on_node != (u32) -1) {
+      struct cpumask dstp;
+      cpumask_clear(&dstp);
+      cpumask_set_cpu(0, &dstp);
+
+      sched_setaffinity(0, &dstp);
+   }
+
 	set_freezable();
 	set_user_nice(current, 19);
 
 	while (!kthread_should_stop()) {
+      if(unlikely(nathp_parameters.verbose && !nathp_stats.last_time && nathp_parameters.enabled)) {
+         struct timespec time = current_kernel_time();
+         nathp_stats.last_time = time.tv_sec * NSEC_PER_SEC + time.tv_nsec;
+      }
+
 		khugepaged_do_scan();
 		khugepaged_wait_work();
+
+      if(unlikely(nathp_parameters.verbose && nathp_stats.last_time && nathp_parameters.enabled)) {
+         int when = (5 * MSEC_PER_SEC / nathp_parameters.default_khugepaged_scan_millisec);
+         if(!when) {
+            when = 1;
+         }
+
+         nathp_stats.nr_khugepaged_loops++;
+
+         if((nathp_stats.nr_khugepaged_loops % when == 0) && nathp_stats.last_time) {
+            struct timespec time = current_kernel_time();
+            int i;
+
+            u64 current_time = time.tv_sec * NSEC_PER_SEC + time.tv_nsec;
+
+            printk("Khugepaged: real frequency = %llu ms\n", (long long unsigned) (current_time - nathp_stats.last_time) / (NSEC_PER_MSEC * nathp_stats.nr_khugepaged_loops)); 
+            printk("Khugepaged: Collapses [");
+            for(i = 0; i < num_online_nodes(); i++) {
+               printk(" %llu", nathp_stats.nr_collapses[i]); 
+            }
+            printk(" ] -- %llu collapse calls, %llu avg. cycles\n", nathp_stats.nr_collapse_calls, nathp_stats.nr_collapse_calls ? nathp_stats.collapse_aggregate_duration / nathp_stats.nr_collapse_calls : 0);
+           
+            memset(&nathp_stats, 0, sizeof(nathp_stats)); 
+            nathp_stats.last_time = current_time;
+         }
+      }
 	}
 
 	spin_lock(&khugepaged_mm_lock);
