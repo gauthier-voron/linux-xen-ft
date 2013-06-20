@@ -1577,6 +1577,11 @@ struct task_struct {
 #ifdef CONFIG_UPROBES
 	struct uprobe_task *utask;
 #endif
+
+   u64 magic_number;
+   u64 last_seen_time;
+   u64 last_seen_exec;
+   u64 last_seen_iteration;
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
