@@ -1582,6 +1582,7 @@ struct task_struct {
    u64 last_seen_time;
    u64 last_seen_exec;
    u64 last_seen_iteration;
+   u64 last_seen_weight;
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
