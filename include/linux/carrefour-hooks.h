@@ -2,7 +2,8 @@
 #define __LINUX_CARREFOUR_HOOKS_H
 
 struct carrefour_options_t {
-   int page_bouncing_fix;
+   int page_bouncing_fix_4k;
+   int page_bouncing_fix_2M;
    int use_balance_numa_api;
    int use_balance_numa_rate_limit;
    int sync_thp_migration;

@@ -11,7 +11,8 @@
 #include <linux/replicate.h>
 
 struct carrefour_options_t carrefour_default_options = {
-   .page_bouncing_fix = 0,
+   .page_bouncing_fix_4k = 0,
+   .page_bouncing_fix_2M = 0,
    .use_balance_numa_api = 0,
 };
 
@@ -192,7 +193,7 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
          continue;
       }
 
-      if(carrefour_options.page_bouncing_fix && (page->stats.nr_migrations >= carrefour_options.page_bouncing_fix)) {
+      if(carrefour_options.page_bouncing_fix_4k && (page->stats.nr_migrations >= carrefour_options.page_bouncing_fix_4k)) {
          //DEBUG_WARNING("Page bouncing fix enable\n");
          put_page(page);
          continue;
@@ -518,7 +519,7 @@ int find_and_migrate_thp(int pid, unsigned long addr, int to_node) {
 		goto out_locked;
 	}
 
-   if(carrefour_options.page_bouncing_fix && (page->stats.nr_migrations >= carrefour_options.page_bouncing_fix)) {
+   if(carrefour_options.page_bouncing_fix_2M && (page->stats.nr_migrations >= carrefour_options.page_bouncing_fix_2M)) {
 		unlock_page(page);
 		put_page(page);
       spin_unlock(&mm->page_table_lock);
