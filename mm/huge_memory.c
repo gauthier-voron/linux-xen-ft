@@ -71,20 +71,20 @@ static unsigned int khugepaged_max_ptes_none __read_mostly = HPAGE_PMD_NR-1;
 /* JRF */
 static struct {
    u32 enabled;
+   u32 kthp_enabled;
    u32 node_threshold;
    u32 default_khugepaged_scan_millisec;
    u32 rr_alloc;
-   u32 fake;
    u32 alloc_huge;
    u32 regular_algorithm;
    u32 verbose;
    u32 pin_on_node;
 } nathp_parameters = {
    .enabled                            = 0,
+   .kthp_enabled                       = 0,
    .node_threshold                     = 512,
    .default_khugepaged_scan_millisec   = 10,
    .rr_alloc                           = 0,
-   .fake                               = 0,
    .alloc_huge                         = 0,
    .regular_algorithm                  = 0,
    .verbose                            = 0,
@@ -94,10 +94,11 @@ static struct {
 static struct {
    struct dentry *dir_entry;
    struct dentry *enabled;
+   struct dentry *kthp_enabled;
    struct dentry *node_threshold;
    struct dentry *default_khugepaged_scan_millisec;
    struct dentry *rr_alloc;
-   struct dentry *fake;
+   struct dentry *alloc_huge;
    struct dentry *regular_algorithm;
    struct dentry *verbose;
    struct dentry *pin_on_node;
@@ -708,9 +709,9 @@ static int dfs_nathp_u32_set(void *data, u64 val) {
       sched_setaffinity(khugepaged_thread->pid, &dstp);
    }
 
-   printk("NATHP: enabled = %u, period = %u ms, node threshold = %u, rr_alloc = %u, fake = %u, regular_algorithm = %u, verbose = %u, pin_on_node = %d alloc_huge = %u\n",
-         nathp_parameters.enabled, khugepaged_scan_sleep_millisecs, nathp_parameters.node_threshold, nathp_parameters.rr_alloc,
-         nathp_parameters.fake, nathp_parameters.regular_algorithm, nathp_parameters.verbose, (int) nathp_parameters.pin_on_node,
+   printk("NATHP: enabled = %u, kthp_enabled = %u, period = %u ms, node threshold = %u, rr_alloc = %u, regular_algorithm = %u, verbose = %u, pin_on_node = %d alloc_huge = %u\n",
+         nathp_parameters.enabled, nathp_parameters.kthp_enabled, khugepaged_scan_sleep_millisecs, nathp_parameters.node_threshold, nathp_parameters.rr_alloc,
+         nathp_parameters.regular_algorithm, nathp_parameters.verbose, (int) nathp_parameters.pin_on_node,
          nathp_parameters.alloc_huge);
 
 	wake_up_interruptible(&khugepaged_wait);
@@ -729,16 +730,16 @@ static void __init_dfs(void) {
    nathp_dfs_entries.enabled = 
       debugfs_create_file("enabled", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.enabled, &fops_nathp_u32);
 
+   nathp_dfs_entries.kthp_enabled = 
+      debugfs_create_file("kthp_enabled", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.kthp_enabled, &fops_nathp_u32);
+
    nathp_dfs_entries.default_khugepaged_scan_millisec = 
       debugfs_create_file("default_khugepaged_scan_sleep_millisecs", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.default_khugepaged_scan_millisec, &fops_nathp_u32);
 
    nathp_dfs_entries.rr_alloc = 
       debugfs_create_file("rr_alloc", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.rr_alloc, &fops_nathp_u32);
   
-   nathp_dfs_entries.fake = 
-      debugfs_create_file("fake", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.fake, &fops_nathp_u32);
-
-   nathp_dfs_entries.fake = 
+   nathp_dfs_entries.alloc_huge = 
       debugfs_create_file("alloc_huge", 0666, nathp_dfs_entries.dir_entry, &nathp_parameters.alloc_huge, &fops_nathp_u32);
 
    nathp_dfs_entries.regular_algorithm = 
@@ -2643,11 +2644,11 @@ static int khugepaged_scan_pmd(struct mm_struct *mm,
          goto out_unmap;
       }
    }
-   
-   if(nathp_parameters.fake) {
+
+   if(nathp_parameters.enabled && !nathp_parameters.kthp_enabled) {
       goto out_unmap;
    }
-
+   
 	if (referenced)
 		ret = 1;
 out_unmap:
