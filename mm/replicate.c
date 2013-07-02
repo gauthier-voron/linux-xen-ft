@@ -687,6 +687,77 @@ PROCFS Functions
 We create here entries in the proc system that will allows us to configure replication and gather stats :)
 That's not very clean, we should use sysfs instead [TODO]
 **/
+static u64 last_rdt = 0;
+static u64 last_timelock = 0;
+static const char* lock_fn = "time_lock";
+
+static unsigned long _get_merged_lock_time(void) {
+   int cpu;
+   unsigned long time_lock = 0;
+
+   /** Merging stats **/
+   write_lock(&reset_stats_rwl);
+
+   for_each_online_cpu(cpu) {
+      replication_stats_t * stats = per_cpu_ptr(&replication_stats_per_core, cpu);
+
+      time_lock += (stats->time_spent_acquiring_readlocks + stats->time_spent_acquiring_writelocks);
+   }
+
+   write_unlock(&reset_stats_rwl);
+
+   return time_lock;
+}
+
+static int get_lock_contention(struct seq_file *m, void* v)
+{
+   unsigned long rdt;
+   unsigned long time_lock, time_lock_acc;
+
+   if(!last_rdt) {
+      seq_printf(m, "You must write to the file first !\n");
+      return 0;
+   } 
+
+   rdtscll(rdt);
+   rdt -= last_rdt;
+
+   time_lock_acc = _get_merged_lock_time();
+   time_lock = time_lock_acc - last_timelock;
+   last_timelock = time_lock_acc;
+
+   if(rdt) {
+      seq_printf(m, "%lu\n", (time_lock * 100) / (rdt * num_online_cpus()));
+   }
+
+   rdtscll(last_rdt);
+   return 0;
+}
+
+static void _lock_contention_reset(void) {
+   rdtscll(last_rdt);
+   last_timelock = _get_merged_lock_time();
+}
+
+static ssize_t lock_contention_reset(struct file *file, const char __user *buf, size_t count, loff_t *ppos) {
+   _lock_contention_reset();
+   return count;
+}
+
+static int lock_contention_open(struct inode *inode, struct file *file) {
+   return single_open(file, get_lock_contention, NULL);
+}
+
+static const struct file_operations lock_handlers = {
+   .owner   = THIS_MODULE,
+   .open    = lock_contention_open,
+   .read    = seq_read,
+   .llseek  = seq_lseek,
+   .release = seq_release,
+   .write   = lock_contention_reset,
+};
+
+
 static int display_replication_stats(struct seq_file *m, void* v)
 {
    replication_stats_t* global_stats;
@@ -812,9 +883,10 @@ static ssize_t ibs_proc_write(struct file *file, const char __user *buf, size_t 
    }
 
    write_unlock(&reset_stats_rwl);
+
+   _lock_contention_reset();
    return count;
 }
-
 
 static const struct file_operations replication_stats_handlers = {
    .owner   = THIS_MODULE,
@@ -824,7 +896,6 @@ static const struct file_operations replication_stats_handlers = {
    .release = seq_release,
    .write   = ibs_proc_write,
 };
-
 /** END: procfs stuff **/
 #endif
 
@@ -849,6 +920,11 @@ static int __init replicate_init(void)
 
    if(!proc_create(PROCFS_REPLICATE_STATS_FN, S_IRUGO, NULL, &replication_stats_handlers)){
       DEBUG_WARNING("Cannot create /proc/%s\n", PROCFS_REPLICATE_STATS_FN);
+      return -ENOMEM;
+   }
+
+   if(!proc_create(lock_fn, S_IRUGO, NULL, &lock_handlers)){
+      DEBUG_WARNING("Cannot create /proc/%s\n", lock_fn);
       return -ENOMEM;
    }
 #endif
