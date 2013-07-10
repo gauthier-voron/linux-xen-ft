@@ -688,12 +688,15 @@ We create here entries in the proc system that will allows us to configure repli
 That's not very clean, we should use sysfs instead [TODO]
 **/
 static u64 last_rdt = 0;
-static u64 last_timelock = 0;
+static unsigned long last_timelock = 0;
+static unsigned long last_timespinlock = 0;
 static const char* lock_fn = "time_lock";
 
-static unsigned long _get_merged_lock_time(void) {
+static void _get_merged_lock_time(unsigned long * mm_lock_time, unsigned long * spinlock_time) {
    int cpu;
-   unsigned long time_lock = 0;
+
+   *mm_lock_time = 0;
+   *spinlock_time = 0;
 
    /** Merging stats **/
    write_lock(&reset_stats_rwl);
@@ -701,18 +704,18 @@ static unsigned long _get_merged_lock_time(void) {
    for_each_online_cpu(cpu) {
       replication_stats_t * stats = per_cpu_ptr(&replication_stats_per_core, cpu);
 
-      time_lock += (stats->time_spent_acquiring_readlocks + stats->time_spent_acquiring_writelocks);
+      *mm_lock_time += (stats->time_spent_acquiring_readlocks + stats->time_spent_acquiring_writelocks);
+      *spinlock_time += (stats->time_spent_spinlocks);
    }
 
    write_unlock(&reset_stats_rwl);
-
-   return time_lock;
 }
 
 static int get_lock_contention(struct seq_file *m, void* v)
 {
    unsigned long rdt;
    unsigned long time_lock, time_lock_acc;
+   unsigned long time_spinlock, time_spinlock_acc;
 
    if(!last_rdt) {
       seq_printf(m, "You must write to the file first !\n");
@@ -722,12 +725,16 @@ static int get_lock_contention(struct seq_file *m, void* v)
    rdtscll(rdt);
    rdt -= last_rdt;
 
-   time_lock_acc = _get_merged_lock_time();
+   _get_merged_lock_time(&time_lock_acc, &time_spinlock_acc);
+
    time_lock = time_lock_acc - last_timelock;
    last_timelock = time_lock_acc;
 
+   time_spinlock = time_spinlock_acc - last_timespinlock;
+   last_timespinlock = time_spinlock_acc;
+
    if(rdt) {
-      seq_printf(m, "%lu\n", (time_lock * 100) / (rdt * num_online_cpus()));
+      seq_printf(m, "%lu %lu\n", (time_lock * 100) / (rdt * num_online_cpus()), (time_spinlock * 100) / (rdt * num_online_cpus()));
    }
 
    rdtscll(last_rdt);
@@ -736,7 +743,7 @@ static int get_lock_contention(struct seq_file *m, void* v)
 
 static void _lock_contention_reset(void) {
    rdtscll(last_rdt);
-   last_timelock = _get_merged_lock_time();
+   _get_merged_lock_time(&last_timelock, &last_timespinlock);
 }
 
 static ssize_t lock_contention_reset(struct file *file, const char __user *buf, size_t count, loff_t *ppos) {
@@ -797,11 +804,6 @@ static int display_replication_stats(struct seq_file *m, void* v)
       }
    }
 
-   time_rd_lock = 0;
-   time_wr_lock = 0;
-   time_lock    = 0;
-   time_pgfault = 0;
-
    if(global_stats->nr_readlock_taken) {
       time_rd_lock = (unsigned long) (global_stats->time_spent_acquiring_readlocks / global_stats->nr_readlock_taken);
    }
@@ -825,6 +827,8 @@ static int display_replication_stats(struct seq_file *m, void* v)
    seq_printf(m, "[GLOBAL] Time spent acquiring read locks: %lu cycles\n", time_rd_lock);
    seq_printf(m, "[GLOBAL] Time spent acquiring write locks: %lu cycles\n", time_wr_lock);
    seq_printf(m, "[GLOBAL] Time spent acquiring locks (global): %lu cycles\n\n", time_lock);
+   
+   seq_printf(m, "[GLOBAL] Time spent acquiring spinlocks (total, global): %lu cycles\n\n", (unsigned long) global_stats->time_spent_spinlocks);
 
    seq_printf(m, "[GLOBAL] Number of page faults: %lu\n", (unsigned long) global_stats->nr_pgfault);
    seq_printf(m, "[GLOBAL] Time spent in the page fault handler: %lu cycles\n\n", time_pgfault);
@@ -1333,5 +1337,16 @@ fail_nolock:
    dump_pgd_content(mm);
    return 1;
 }
+
+void increase_spinlock_contention(unsigned long time_cycles) {
+   replication_stats_t* stats;
+   
+   stats = this_cpu_ptr(&replication_stats_per_core);
+   // For this one we don't use the lock, but instead an atomic op. That's OK becase
+   // 1) We modify a single variable
+   // 2) It's only modified by this function and the reset function
+   __sync_fetch_and_add(&stats->time_spent_spinlocks, time_cycles); 
+}
+EXPORT_SYMBOL(increase_spinlock_contention); // Spinlock.h is also used by modules
 
 module_init(replicate_init)

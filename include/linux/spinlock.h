@@ -57,7 +57,6 @@
 #include <linux/bottom_half.h>
 #include <asm/barrier.h>
 
-
 /*
  * Must define these before including other files, inline functions need them
  */
@@ -280,9 +279,16 @@ do {							\
 	raw_spin_lock_init(&(_lock)->rlock);		\
 } while (0)
 
+void increase_spinlock_contention(unsigned long time_cycles); // Defined in replicate.c
 static inline void spin_lock(spinlock_t *lock)
 {
+   uint64_t start, stop;
+   rdtscll(start);
+
 	raw_spin_lock(&lock->rlock);
+
+   rdtscll(stop);
+   increase_spinlock_contention(stop - start);   
 }
 
 static inline void spin_lock_bh(spinlock_t *lock)

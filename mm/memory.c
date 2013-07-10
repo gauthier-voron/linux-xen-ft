@@ -1189,6 +1189,7 @@ again:
             replication_stats_t* stats;
             read_lock(&reset_stats_rwl);
             stats = get_cpu_ptr(&replication_stats_per_core);
+            spin_lock(&stats->lock);
             stats->nr_4k_pages_freed++;
 
             if(page->stats.nr_migrations) {
@@ -1199,6 +1200,7 @@ again:
                }
             }
 
+            spin_unlock(&stats->lock);
             put_cpu_ptr(&replication_stats_per_core);
             read_unlock(&reset_stats_rwl);
          }

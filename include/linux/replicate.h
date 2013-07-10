@@ -9,6 +9,9 @@
 
 /** Configuration of replication internal stuff **/
 // Now moved into include/linux/replicate-options.h
+#ifndef __REPLICATE_OPTIONS__
+#error "You also need to include include/linux/replicate-options.h"
+#endif
 
 /* Modeled after pgd_offset in pgtable.h */
 #define rep_pgd_offset(pgd, address) (pgd + pgd_index(address))
@@ -178,6 +181,8 @@ typedef struct __attribute__((packed)) {
    uint64_t nr_writelock_taken;
    uint64_t time_spent_acquiring_writelocks;
 
+   uint64_t time_spent_spinlocks;
+
    uint64_t nr_pgfault;
    uint64_t time_spent_in_pgfault_handler;
 
@@ -194,6 +199,8 @@ typedef struct __attribute__((packed)) {
    uint64_t nr_2M_pages_freed;
    uint64_t nr_2M_pages_migrated_at_least_once;
    uint64_t max_nr_migrations_per_2M_page;
+
+   spinlock_t lock;
 } replication_stats_t;
 
 extern rwlock_t reset_stats_rwl;
@@ -203,7 +210,10 @@ DECLARE_PER_CPU(replication_stats_t, replication_stats_per_core);
    replication_stats_t* stats; \
    read_lock(&reset_stats_rwl); \
    stats = get_cpu_ptr(&replication_stats_per_core); \
+   \
+   spin_lock(&stats->lock); \
    stats->entry += (value); \
+   spin_unlock(&stats->lock); \
    put_cpu_ptr(&replication_stats_per_core); \
    read_unlock(&reset_stats_rwl); \
 }
@@ -218,8 +228,10 @@ DECLARE_PER_CPU(replication_stats_t, replication_stats_per_core);
       replication_stats_t* stats; \
       read_lock(&reset_stats_rwl); \
       stats = get_cpu_ptr(&replication_stats_per_core); \
+      spin_lock(&stats->lock); \
       stats->acc_counter++; \
       stats->time_counter+= (rdt_stop - rdt_start); \
+      spin_unlock(&stats->lock); \
       put_cpu_ptr(&replication_stats_per_core); \
       read_unlock(&reset_stats_rwl); \
    }

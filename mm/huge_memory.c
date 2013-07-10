@@ -1530,6 +1530,7 @@ int zap_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
             replication_stats_t* stats;
             read_lock(&reset_stats_rwl);
             stats = get_cpu_ptr(&replication_stats_per_core);
+            spin_lock(&stats->lock);
             stats->nr_2M_pages_freed++;
 
             if(page->stats.nr_migrations) {
@@ -1540,6 +1541,7 @@ int zap_huge_pmd(struct mmu_gather *tlb, struct vm_area_struct *vma,
                stats->max_nr_migrations_per_2M_page = page->stats.nr_migrations;
             }
 
+            spin_unlock(&stats->lock);
             put_cpu_ptr(&replication_stats_per_core);
             read_unlock(&reset_stats_rwl);
          }
