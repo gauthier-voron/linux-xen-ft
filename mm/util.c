@@ -14,6 +14,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/kmem.h>
 
+#include <linux/replicate.h>
+
 /**
  * kstrdup - allocate space for and copy an existing string
  * @s: the string to duplicate
@@ -361,12 +363,16 @@ unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
 
 	ret = security_mmap_file(file, prot, flag);
 	if (!ret) {
-		down_write(&mm->mmap_sem);
+		unsigned long duration = down_write(&mm->mmap_sem);
+
 		ret = do_mmap_pgoff(file, addr, len, prot, flag, pgoff,
 				    &populate);
+
 		up_write(&mm->mmap_sem);
 		if (populate)
 			mm_populate(ret, populate);
+
+      INCR_REP_STAT_VALUE(time_spent_mmap, duration);
 	}
 	return ret;
 }

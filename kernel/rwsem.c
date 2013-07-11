@@ -57,7 +57,7 @@ EXPORT_SYMBOL(down_read_trylock);
 /*
  * lock for writing
  */
-void __sched down_write(struct rw_semaphore *sem)
+unsigned long __sched down_write(struct rw_semaphore *sem)
 {
    RECORD_DURATION_START;
 
@@ -70,6 +70,12 @@ void __sched down_write(struct rw_semaphore *sem)
 	LOCK_CONTENDED(sem, __down_write_trylock, __down_write);
 
    RECORD_DURATION_END(time_spent_acquiring_writelocks, nr_writelock_taken);
+
+   /*if((rdt_stop - rdt_start) > 100000) {
+      printk("Acquiring writer lock %p (caller %p)\n", sem, __builtin_return_address(0));
+   }*/
+
+   return (rdt_stop - rdt_start);
 }
 
 EXPORT_SYMBOL(down_write);

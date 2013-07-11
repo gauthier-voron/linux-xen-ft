@@ -689,14 +689,25 @@ That's not very clean, we should use sysfs instead [TODO]
 **/
 static u64 last_rdt = 0;
 static unsigned long last_timelock = 0;
+static unsigned long last_timewlock = 0;
 static unsigned long last_timespinlock = 0;
+static unsigned long last_timemmap = 0;
+static unsigned long last_timemunmap = 0;
+static unsigned long last_timebrk = 0;
+static unsigned long last_timemprotect = 0;
+
 static const char* lock_fn = "time_lock";
 
-static void _get_merged_lock_time(unsigned long * mm_lock_time, unsigned long * spinlock_time) {
+static void _get_merged_lock_time(unsigned long * mm_lock_time, unsigned long * mm_wlock_time, unsigned long * spinlock_time, unsigned long* mmap_time, unsigned long* brk_time, unsigned long* munmap_time, unsigned long* mprotect_time) {
    int cpu;
 
    *mm_lock_time = 0;
+   *mm_wlock_time = 0;
    *spinlock_time = 0;
+   *mmap_time = 0;
+   *munmap_time = 0;
+   *brk_time = 0;
+   *mprotect_time = 0;
 
    /** Merging stats **/
    write_lock(&reset_stats_rwl);
@@ -705,7 +716,12 @@ static void _get_merged_lock_time(unsigned long * mm_lock_time, unsigned long * 
       replication_stats_t * stats = per_cpu_ptr(&replication_stats_per_core, cpu);
 
       *mm_lock_time += (stats->time_spent_acquiring_readlocks + stats->time_spent_acquiring_writelocks);
+      *mm_wlock_time += (stats->time_spent_acquiring_writelocks);
       *spinlock_time += (stats->time_spent_spinlocks);
+      *mmap_time += (stats->time_spent_mmap);
+      *brk_time += (stats->time_spent_brk);
+      *munmap_time += (stats->time_spent_munmap);
+      *mprotect_time += (stats->time_spent_mprotect);
    }
 
    write_unlock(&reset_stats_rwl);
@@ -715,7 +731,13 @@ static int get_lock_contention(struct seq_file *m, void* v)
 {
    unsigned long rdt;
    unsigned long time_lock, time_lock_acc;
+   unsigned long time_wlock, time_wlock_acc;
    unsigned long time_spinlock, time_spinlock_acc;
+   unsigned long time_mmap, time_mmap_acc;
+   unsigned long time_brk, time_brk_acc;
+   unsigned long time_munmap, time_munmap_acc;
+   unsigned long time_mprotect, time_mprotect_acc;
+   unsigned long div;
 
    if(!last_rdt) {
       seq_printf(m, "You must write to the file first !\n");
@@ -725,16 +747,37 @@ static int get_lock_contention(struct seq_file *m, void* v)
    rdtscll(rdt);
    rdt -= last_rdt;
 
-   _get_merged_lock_time(&time_lock_acc, &time_spinlock_acc);
+   _get_merged_lock_time(&time_lock_acc, &time_wlock_acc, &time_spinlock_acc, &time_mmap_acc, &time_brk_acc, &time_munmap_acc, &time_mprotect_acc);
 
    time_lock = time_lock_acc - last_timelock;
    last_timelock = time_lock_acc;
 
+   time_wlock = time_wlock_acc - last_timewlock;
+   last_timewlock = time_wlock_acc;
+
    time_spinlock = time_spinlock_acc - last_timespinlock;
    last_timespinlock = time_spinlock_acc;
 
+   time_mmap = time_mmap_acc - last_timemmap;
+   last_timemmap = time_mmap_acc;
+
+   time_munmap = time_munmap_acc - last_timemunmap;
+   last_timemunmap = time_munmap_acc;
+
+   time_brk = time_brk_acc - last_timebrk;
+   last_timebrk = time_brk_acc;
+
+   time_mprotect = time_mprotect_acc - last_timemprotect;
+   last_timemprotect = time_mprotect_acc;
+
+   div = rdt * num_online_cpus();
+   
    if(rdt) {
-      seq_printf(m, "%lu %lu\n", (time_lock * 100) / (rdt * num_online_cpus()), (time_spinlock * 100) / (rdt * num_online_cpus()));
+      seq_printf(m, "%lu %lu %lu %lu %lu %lu\n",
+            (time_lock * 100) / div, (time_spinlock * 100) / div,
+            (time_mmap * 100) / time_wlock, (time_brk * 100) / time_wlock, (time_munmap * 100) / time_wlock, (time_mprotect * 100) / time_wlock
+            //(time_mmap * 100) / div, (time_brk * 100) / div, (time_munmap * 100) / div, (time_mprotect * 100) / div
+         );
    }
 
    rdtscll(last_rdt);
@@ -743,7 +786,7 @@ static int get_lock_contention(struct seq_file *m, void* v)
 
 static void _lock_contention_reset(void) {
    rdtscll(last_rdt);
-   _get_merged_lock_time(&last_timelock, &last_timespinlock);
+   _get_merged_lock_time(&last_timelock, &last_timewlock, &last_timespinlock, &last_timemmap, &last_timebrk, &last_timemunmap, &last_timemprotect);
 }
 
 static ssize_t lock_contention_reset(struct file *file, const char __user *buf, size_t count, loff_t *ppos) {
@@ -828,7 +871,11 @@ static int display_replication_stats(struct seq_file *m, void* v)
    seq_printf(m, "[GLOBAL] Time spent acquiring write locks: %lu cycles\n", time_wr_lock);
    seq_printf(m, "[GLOBAL] Time spent acquiring locks (global): %lu cycles\n\n", time_lock);
    
-   seq_printf(m, "[GLOBAL] Time spent acquiring spinlocks (total, global): %lu cycles\n\n", (unsigned long) global_stats->time_spent_spinlocks);
+   seq_printf(m, "[GLOBAL] Time spent acquiring spinlocks (total, global): %lu cycles\n", (unsigned long) global_stats->time_spent_spinlocks);
+   seq_printf(m, "[GLOBAL] Time spent in mmap (total, global): %lu cycles\n", (unsigned long) global_stats->time_spent_mmap);
+   seq_printf(m, "[GLOBAL] Time spent in brk (total, global): %lu cycles\n", (unsigned long) global_stats->time_spent_brk);
+   seq_printf(m, "[GLOBAL] Time spent in munmap (total, global): %lu cycles\n", (unsigned long) global_stats->time_spent_munmap);
+   seq_printf(m, "[GLOBAL] Time spent in mprotect (total, global): %lu cycles\n\n", (unsigned long) global_stats->time_spent_mprotect);
 
    seq_printf(m, "[GLOBAL] Number of page faults: %lu\n", (unsigned long) global_stats->nr_pgfault);
    seq_printf(m, "[GLOBAL] Time spent in the page fault handler: %lu cycles\n\n", time_pgfault);

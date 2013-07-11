@@ -336,6 +336,9 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	struct vm_area_struct *vma, *prev;
 	int error = -EINVAL;
 	const int grows = prot & (PROT_GROWSDOWN|PROT_GROWSUP);
+
+   unsigned long duration;
+
 	prot &= ~(PROT_GROWSDOWN|PROT_GROWSUP);
 	if (grows == (PROT_GROWSDOWN|PROT_GROWSUP)) /* can't be both */
 		return -EINVAL;
@@ -360,7 +363,7 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 
 	vm_flags = calc_vm_prot_bits(prot);
 
-	down_write(&current->mm->mmap_sem);
+	duration = down_write(&current->mm->mmap_sem);
 
 	vma = find_vma(current->mm, start);
 	error = -ENOMEM;
@@ -426,5 +429,6 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	}
 out:
 	up_write(&current->mm->mmap_sem);
+   INCR_REP_STAT_VALUE(time_spent_mprotect, duration);
 	return error;
 }

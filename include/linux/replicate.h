@@ -9,9 +9,7 @@
 
 /** Configuration of replication internal stuff **/
 // Now moved into include/linux/replicate-options.h
-#ifndef __REPLICATE_OPTIONS__
-#error "You also need to include include/linux/replicate-options.h"
-#endif
+#include <linux/replicate-options.h>
 
 /* Modeled after pgd_offset in pgtable.h */
 #define rep_pgd_offset(pgd, address) (pgd + pgd_index(address))
@@ -182,6 +180,11 @@ typedef struct __attribute__((packed)) {
    uint64_t time_spent_acquiring_writelocks;
 
    uint64_t time_spent_spinlocks;
+
+   uint64_t time_spent_mmap;
+   uint64_t time_spent_brk;
+   uint64_t time_spent_munmap;
+   uint64_t time_spent_mprotect;
 
    uint64_t nr_pgfault;
    uint64_t time_spent_in_pgfault_handler;
