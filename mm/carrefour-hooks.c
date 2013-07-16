@@ -134,18 +134,20 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
 
    rdtscll(start);
 
-   for(i = 0; i < num_online_nodes(); i++) {
-      migratepages_nodes[i] = kmalloc(sizeof (struct list_head), GFP_KERNEL);
-      if(!migratepages_nodes[i]) {
-         int j;
-         for(j = 0; j < i; j++) {
-            kfree(migratepages_nodes[j]);
-         }
+   if(!use_balance_numa_api) {
+      for(i = 0; i < num_online_nodes(); i++) {
+         migratepages_nodes[i] = kmalloc(sizeof (struct list_head), GFP_KERNEL);
+         if(!migratepages_nodes[i]) {
+            int j;
+            for(j = 0; j < i; j++) {
+               kfree(migratepages_nodes[j]);
+            }
 
-         DEBUG_WARNING("Cannot allocate memory !\n");
-         return -ENOMEM;
+            DEBUG_WARNING("Cannot allocate memory !\n");
+            return -ENOMEM;
+         }
+         INIT_LIST_HEAD(migratepages_nodes[i]);
       }
-      INIT_LIST_HEAD(migratepages_nodes[i]);
    }
 
    rcu_read_lock();
@@ -248,7 +250,7 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
    mmput(mm);
 
 out_clean:
-   if(use_balance_numa_api) {
+   if(!use_balance_numa_api) {
       for(i = 0; i < num_online_nodes(); i++) {
          kfree(migratepages_nodes[i]);
       }
