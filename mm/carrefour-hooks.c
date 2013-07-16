@@ -379,6 +379,9 @@ int find_and_split_thp(int pid, unsigned long addr) {
    int ret = 1;
    int err;
 
+   u64 start, stop;
+   rdtscll(start);
+
    rcu_read_lock();
    task = find_task_by_vpid(pid);
    if(task) {
@@ -427,6 +430,10 @@ out_locked:
    //printk("[Core %d, PID %d] Releasing mm lock (0x%p)\n", smp_processor_id(), pid, &mm->mmap_sem);
    up_read(&mm->mmap_sem);
    mmput(mm);
+
+   rdtscll(stop);
+   carrefour_hook_stats.split_nb_calls++;
+   carrefour_hook_stats.time_spent_in_split += (stop - start);
 
    return ret;
 }

@@ -12,7 +12,10 @@ extern struct carrefour_options_t carrefour_options;
 
 struct carrefour_hook_stats_t {
    u64 time_spent_in_migration;
-   u32 s_migrate_nb_calls;
+   u64 s_migrate_nb_calls;
+
+   u64 time_spent_in_split;
+   u64 split_nb_calls;
 };
 extern struct carrefour_hook_stats_t carrefour_hook_stats;
 
