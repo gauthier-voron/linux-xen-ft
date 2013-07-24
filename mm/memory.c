@@ -3654,9 +3654,12 @@ int do_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
    }
 
 	current_nid = page_to_nid(page);
-	target_nid = numa_migrate_prep(page, vma, addr, current_nid);
+	//target_nid = numa_migrate_prep(page, vma, addr, current_nid);
+   get_page(page);
+   target_nid = page->dest_node;
+
 	pte_unmap_unlock(ptep, ptl);
-	if (target_nid == -1) {
+	if (target_nid == -1 || target_nid == current_nid) {
 		/*
 		 * Account for the fault against the current node if it not
 		 * being replaced regardless of where the page is located.

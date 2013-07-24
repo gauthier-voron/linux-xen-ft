@@ -171,32 +171,47 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
       unsigned long addr = (unsigned long) pages[i];
       int current_node;
 
+      pte_t* pte;
+      spinlock_t* ptl;
+
       vma = find_vma(mm, addr);
       if (!vma || addr < vma->vm_start) {
          continue;
       }
 
-      page = follow_page(vma, addr, FOLL_GET);
+      pte = get_locked_pte_from_va (mm->pgd_master, mm, addr, &ptl);
+
+      if(!pte) {
+         continue;
+      }
+
+      page = vm_normal_page(vma, addr, *pte);
 
       if (IS_ERR(page) || !page) {
+         pte_unmap_unlock(pte, ptl);
          //DEBUG_WARNING("Cannot migrate a NULL page\n");
          continue;
       }
 
+      get_page(page);
+
       /* Don't want to migrate a replicated page */
       if (PageReplication(page)) {
+         pte_unmap_unlock(pte, ptl);
          put_page(page);
          continue;
       }
 
       if (PageHuge(page) || PageTransHuge(page)) {
          DEBUG_WARNING("[WARNING] What am I doing here ?\n");
+         pte_unmap_unlock(pte, ptl);
          put_page(page);
          continue;
       }
 
       if(carrefour_options.page_bouncing_fix_4k && (page->stats.nr_migrations >= carrefour_options.page_bouncing_fix_4k)) {
          //DEBUG_WARNING("Page bouncing fix enable\n");
+         pte_unmap_unlock(pte, ptl);
          put_page(page);
          continue;
       }
@@ -204,11 +219,14 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
       current_node = page_to_nid(page);
       if(current_node == nodes[i]) {
          //DEBUG_WARNING("Current node (%d) = destination node (%d) for page 0x%lx\n", current_node, nodes[i], addr);
+         pte_unmap_unlock(pte, ptl);
          put_page(page);
          continue;
       }
 
-      if(use_balance_numa_api) {
+      if(0 && use_balance_numa_api) {
+         pte_unmap_unlock(pte, ptl);
+
          if(migrate_misplaced_page(page, nodes[i])) {
             //__DEBUG("Migrating page 0x%lx\n", addr);
             INCR_REP_STAT_VALUE(migr_4k_from_to_node[current_node][nodes[i]], 1);
@@ -217,7 +235,25 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
             //DEBUG_WARNING("[WARNING] Migration of page 0x%lx failed !\n", addr);
          }
       }
+      else if (use_balance_numa_api) {
+         pte_t new_pte = *pte;
+
+         // TODO: we should lock the page
+         page->dest_node = nodes[i];
+
+         // Make sure that pmd is tagged as "NUMA"
+         new_pte = pte_mknuma(new_pte);
+         set_pte_at(mm, addr, pte, new_pte);
+   
+         /** FGAUD: We need to flush the TLB, don't we ? **/
+         flush_tlb_page(vma, addr);
+
+         pte_unmap_unlock(pte, ptl);
+         put_page(page);
+      }
       else {
+         pte_unmap_unlock(pte, ptl);
+
          /** Similar to migrate.c : Batching migrations **/
          if(!isolate_lru_page(page)) {
             //__DEBUG("Migrating page 0x%lx\n", addr);
