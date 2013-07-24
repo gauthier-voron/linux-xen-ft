@@ -7,6 +7,7 @@ struct carrefour_options_t {
    int use_balance_numa_api;
    int use_balance_numa_rate_limit;
    int sync_thp_migration;
+   int async_4k_migrations;
 };
 extern struct carrefour_options_t carrefour_options;
 

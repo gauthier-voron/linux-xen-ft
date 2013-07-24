@@ -14,6 +14,7 @@ struct carrefour_options_t carrefour_default_options = {
    .page_bouncing_fix_4k = 0,
    .page_bouncing_fix_2M = 0,
    .use_balance_numa_api = 0,
+   .async_4k_migrations  = 0,
 };
 
 struct carrefour_options_t carrefour_options;
@@ -185,7 +186,7 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
          continue;
       }
 
-      page = vm_normal_page(vma, addr, *pte);
+      page = pte_page(*pte);
 
       if (IS_ERR(page) || !page) {
          pte_unmap_unlock(pte, ptl);
@@ -224,12 +225,11 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
          continue;
       }
 
-      if(0 && use_balance_numa_api) {
+      if(use_balance_numa_api && !carrefour_options.async_4k_migrations) {
          pte_unmap_unlock(pte, ptl);
 
          if(migrate_misplaced_page(page, nodes[i])) {
             //__DEBUG("Migrating page 0x%lx\n", addr);
-            INCR_REP_STAT_VALUE(migr_4k_from_to_node[current_node][nodes[i]], 1);
          }
          else {
             //DEBUG_WARNING("[WARNING] Migration of page 0x%lx failed !\n", addr);
@@ -237,18 +237,27 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
       }
       else if (use_balance_numa_api) {
          pte_t new_pte = *pte;
-
-         // TODO: we should lock the page
-         page->dest_node = nodes[i];
-
-         // Make sure that pmd is tagged as "NUMA"
-         new_pte = pte_mknuma(new_pte);
-         set_pte_at(mm, addr, pte, new_pte);
-   
-         /** FGAUD: We need to flush the TLB, don't we ? **/
-         flush_tlb_page(vma, addr);
-
          pte_unmap_unlock(pte, ptl);
+
+         lock_page(page);
+
+         /* Confirm the PTE did not while locked */
+         spin_lock(ptl);
+         if (likely(pte_same(new_pte, *pte))) {
+            // TODO: we should lock the page
+            page->dest_node = nodes[i];
+
+            // Make sure that pmd is tagged as "NUMA"
+            new_pte = pte_mknuma(new_pte);
+            set_pte_at(mm, addr, pte, new_pte);
+
+            /** FGAUD: We need to flush the TLB, don't we ? **/
+            flush_tlb_page(vma, addr);
+         }
+
+         spin_unlock(ptl);
+
+         unlock_page(page);
          put_page(page);
       }
       else {

@@ -110,7 +110,7 @@ static inline pte_t* get_locked_pte_from_va (pgd_t* pgd, struct mm_struct * mm,
       pud_t *pud = pud_offset(pgd, address);
       if(pud_present(*pud)) {
          pmd_t *pmd = pmd_offset(pud, address);
-         if (pmd_present(*pmd )) {
+         if (pmd_present(*pmd ) && !pmd_trans_huge(*pmd)) {
             pte = pte_offset_map_lock(mm, pmd, address, ptl);
             if (! pte_present(*pte)) {
                pte_unmap_unlock(pte, *ptl);
