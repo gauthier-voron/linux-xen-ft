@@ -30,6 +30,10 @@ extern struct carrefour_hook_stats_t carrefour_hook_stats;
 // Returns 0 if the page is present, -<error> otherwise
 // If the page is a regular huge page huge = 1, huge = 2 if it is a THP, huge = 0 otherwise
 int page_status_for_carrefour(int pid, unsigned long addr, int * alread_treated, int * huge);
+
+// -1 if the address is invalid, 0 if regular, 1 if trans_huge
+int is_huge_addr_sloppy (int pid, unsigned long addr);
+
 int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * nodes);
 int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * nodes);
 int find_and_migrate_thp(int pid, unsigned long addr, int to_node);

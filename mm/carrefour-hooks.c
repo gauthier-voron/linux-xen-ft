@@ -20,7 +20,68 @@ struct carrefour_options_t carrefour_default_options = {
 struct carrefour_options_t carrefour_options;
 struct carrefour_hook_stats_t carrefour_hook_stats;
 
-int page_status_for_carrefour(int pid, unsigned long addr, int * alread_treated, int * huge) {
+int is_huge_addr_sloppy (int pid, unsigned long addr) {
+   struct task_struct *task;
+   struct mm_struct *mm = NULL;
+   struct vm_area_struct *vma;
+
+   pgd_t *pgd;
+   pud_t *pud;
+   pmd_t *pmd;
+
+   int is_huge = -1;
+
+   rcu_read_lock();
+   task = find_task_by_vpid(pid);
+   if(task) {
+      mm = get_task_mm(task);
+   }
+   rcu_read_unlock();
+   if (!mm)
+      goto out;
+
+   down_read(&mm->mmap_sem);
+
+   vma = find_vma(mm, addr);
+   if (!vma || addr < vma->vm_start) {
+      goto out_locked;
+   }
+ 
+   pgd = pgd_offset(mm, addr);
+   if (!pgd_present(*pgd )) {
+      goto out_locked;
+   }
+
+   pud = pud_offset(pgd, addr);
+   if(!pud_present(*pud)) {
+      goto out_locked;
+   }
+
+   pmd = pmd_offset(pud, addr);
+   if (!pmd_present(*pmd )) {
+      goto out_locked;
+   }
+
+   if(pmd_trans_huge(*pmd)) {
+      is_huge = 1;
+   }
+   else if(unlikely(is_vm_hugetlb_page(vma))) {
+      is_huge = 1;
+   }
+   else {
+      is_huge = 0;
+   }
+
+out_locked:
+   up_read(&mm->mmap_sem);
+   mmput(mm);
+
+out:
+   return is_huge;
+}
+EXPORT_SYMBOL(is_huge_addr_sloppy);
+
+int page_status_for_carrefour(int pid, unsigned long addr, int * already_treated, int * huge) {
    struct task_struct *task;
    struct mm_struct *mm = NULL;
    struct vm_area_struct *vma;
@@ -29,7 +90,7 @@ int page_status_for_carrefour(int pid, unsigned long addr, int * alread_treated,
    int err;
    int flags = 0;
 
-   *alread_treated = *huge = 0;
+   *already_treated = *huge = 0;
 
    rcu_read_lock();
    task = find_task_by_vpid(pid);
@@ -59,10 +120,10 @@ int page_status_for_carrefour(int pid, unsigned long addr, int * alread_treated,
    ret = 0;
 
    if(page->stats.nr_migrations) { // Page has been migrated already once
-      *alread_treated = 1;
+      *already_treated = 1;
    }
    else if(PageReplication(page)) {
-      *alread_treated = 1;
+      *already_treated = 1;
    }
  
    if (is_vm_hugetlb_page(vma)) {
