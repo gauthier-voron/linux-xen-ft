@@ -683,7 +683,7 @@ static int dfs_nathp_u32_set(void *data, u64 val) {
       wakeup_khugepaged = 1;
    }
    else if (data == &nathp_parameters.kthp_enabled) {
-      if(nathp_parameters.enabled) {
+      if(nathp_parameters.kthp_enabled) {
          khugepaged_scan_sleep_millisecs = nathp_parameters.default_khugepaged_scan_millisec;
       }
       else {
