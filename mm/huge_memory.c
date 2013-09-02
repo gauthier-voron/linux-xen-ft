@@ -673,19 +673,26 @@ static int dfs_nathp_u32_get(void *data, u64 *val) {
 }
 
 static int dfs_nathp_u32_set(void *data, u64 val) {
+   int wakeup_khugepaged = 0;
+   int previous_nathp_state = nathp_parameters.enabled;
+
    *(u32 *)data = val;
 
    if(data == &nathp_parameters.default_khugepaged_scan_millisec) {
       khugepaged_scan_sleep_millisecs = nathp_parameters.default_khugepaged_scan_millisec;
+      wakeup_khugepaged = 1;
    }
-   else if (data == &nathp_parameters.enabled) {
+   else if (data == &nathp_parameters.kthp_enabled) {
       if(nathp_parameters.enabled) {
          khugepaged_scan_sleep_millisecs = nathp_parameters.default_khugepaged_scan_millisec;
-         memset(&nathp_stats, 0, sizeof(nathp_stats));
       }
       else {
          khugepaged_scan_sleep_millisecs = 10000; // Default value, todo: store it somewhere
       }
+      wakeup_khugepaged = 1;
+   }
+   else if (data == &nathp_parameters.enabled && nathp_parameters.enabled && !previous_nathp_state) {
+      memset(&nathp_stats, 0, sizeof(nathp_stats));
    }
    else if (data == &nathp_parameters.pin_on_node) {
       struct cpumask dstp;
@@ -709,12 +716,17 @@ static int dfs_nathp_u32_set(void *data, u64 val) {
       sched_setaffinity(khugepaged_thread->pid, &dstp);
    }
 
-   printk("NATHP: enabled = %u, kthp_enabled = %u, period = %u ms, node threshold = %u, rr_alloc = %u, regular_algorithm = %u, verbose = %u, pin_on_node = %d alloc_huge = %u\n",
-         nathp_parameters.enabled, nathp_parameters.kthp_enabled, khugepaged_scan_sleep_millisecs, nathp_parameters.node_threshold, nathp_parameters.rr_alloc,
-         nathp_parameters.regular_algorithm, nathp_parameters.verbose, (int) nathp_parameters.pin_on_node,
-         nathp_parameters.alloc_huge);
+   if(wakeup_khugepaged) {
+      printk("[WAKING UP KHUGEPAGED] NATHP = %s, KTHP = %s, period = %u ms, node threshold = %u, rr_alloc = %u, regular_algorithm = %u, verbose = %u, pin_on_node = %d alloc_huge = %u\n",
+            nathp_parameters.enabled ? "enable" :"disable", nathp_parameters.kthp_enabled ? "enable" : "disable",
+            khugepaged_scan_sleep_millisecs,
+            nathp_parameters.node_threshold, nathp_parameters.rr_alloc,
+            nathp_parameters.regular_algorithm, nathp_parameters.verbose, (int) nathp_parameters.pin_on_node,
+            nathp_parameters.alloc_huge);
+	
+      wake_up_interruptible(&khugepaged_wait);
+   }
 
-	wake_up_interruptible(&khugepaged_wait);
    return 0;
 }
 DEFINE_SIMPLE_ATTRIBUTE(fops_nathp_u32, dfs_nathp_u32_get, dfs_nathp_u32_set, "%llu\n");
