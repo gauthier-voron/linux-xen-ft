@@ -20,6 +20,12 @@ struct carrefour_hook_stats_t {
 };
 extern struct carrefour_hook_stats_t carrefour_hook_stats;
 
+enum thp_states{
+   THP_DISABLED,
+   THP_ALWAYS,
+   THP_MADVISE
+};
+
 // These are our custom errors
 #define EPAGENOTFOUND   65
 #define EREPLICATEDPAGE 66
@@ -51,4 +57,7 @@ void reset_carrefour_stats(void);
 void configure_carrefour(struct carrefour_options_t options);
 struct carrefour_hook_stats_t* get_carrefour_hook_stats(void);
 
+enum thp_states get_thp_state(void);
+void set_thp_state(enum thp_states state);
+ 
 #endif

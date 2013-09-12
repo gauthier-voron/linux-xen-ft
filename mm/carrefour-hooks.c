@@ -507,10 +507,10 @@ int find_and_split_thp(int pid, unsigned long addr) {
       goto out_locked;
    }
 
-   if (!transparent_hugepage_enabled(vma)) {
+   /*if (!transparent_hugepage_enabled(vma)) {
       ret = -EINVALIDPAGE;
       goto out_locked;
-   }
+   }*/
  
    page = follow_page(vma, addr, FOLL_GET);
 
@@ -576,10 +576,10 @@ int find_and_migrate_thp(int pid, unsigned long addr, int to_node) {
       goto out_locked;
    }
 
-   if (!transparent_hugepage_enabled(vma)) {
+   /*if (!transparent_hugepage_enabled(vma)) {
       ret = -EINVALIDPAGE;
       goto out_locked;
-   }
+   }*/
  
    pgd = pgd_offset(mm, addr);
    if (!pgd_present(*pgd )) {
@@ -694,6 +694,37 @@ out_locked:
 }
 EXPORT_SYMBOL(find_and_migrate_thp);
 
+enum thp_states get_thp_state(void) {
+   if(test_bit(TRANSPARENT_HUGEPAGE_FLAG, &transparent_hugepage_flags)) {
+      return THP_ALWAYS;
+   }
+   else if(test_bit(TRANSPARENT_HUGEPAGE_REQ_MADV_FLAG, &transparent_hugepage_flags)) {
+      return THP_MADVISE;
+   }
+   else {
+      return THP_DISABLED;
+   }
+}
+EXPORT_SYMBOL(get_thp_state);
+
+void set_thp_state(enum thp_states state) {
+   if(state == THP_DISABLED) {
+      clear_bit(TRANSPARENT_HUGEPAGE_FLAG, &transparent_hugepage_flags);
+      clear_bit(TRANSPARENT_HUGEPAGE_REQ_MADV_FLAG, &transparent_hugepage_flags);
+   }
+   else if(state == THP_ALWAYS) {
+      set_bit(TRANSPARENT_HUGEPAGE_FLAG, &transparent_hugepage_flags);
+      clear_bit(TRANSPARENT_HUGEPAGE_REQ_MADV_FLAG, &transparent_hugepage_flags);
+   }
+   else if(state == THP_MADVISE){
+      clear_bit(TRANSPARENT_HUGEPAGE_FLAG, &transparent_hugepage_flags);
+      set_bit(TRANSPARENT_HUGEPAGE_REQ_MADV_FLAG, &transparent_hugepage_flags);
+   }
+   else {
+      DEBUG_WARNING("Unknown state!\n");
+   }
+}
+EXPORT_SYMBOL(set_thp_state);
 
 static int __init carrefour_hooks_init(void) {
    printk("Initializing Carrefour hooks\n");
