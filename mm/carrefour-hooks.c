@@ -7,6 +7,8 @@
 #include <linux/mm_inline.h>
 #include "internal.h"
 
+#include <linux/debugfs.h>
+
 #include <linux/carrefour-hooks.h>
 #include <linux/replicate.h>
 
@@ -15,10 +17,16 @@ struct carrefour_options_t carrefour_default_options = {
    .page_bouncing_fix_2M = 0,
    .use_balance_numa_api = 0,
    .async_4k_migrations  = 0,
+   .throttle_2M_migrations_limit = 0,
 };
 
 struct carrefour_options_t carrefour_options;
 struct carrefour_hook_stats_t carrefour_hook_stats;
+
+static struct dentry *dfs_dir_entry;
+static struct dentry *dfs_it_length;
+
+static u64 iteration_length_cycles = 0;
 
 int is_huge_addr_sloppy (int pid, unsigned long addr) {
    struct task_struct *task;
@@ -734,7 +742,23 @@ void set_thp_state(enum thp_states state) {
 }
 EXPORT_SYMBOL(set_thp_state);
 
+
+unsigned migration_allowed_2M(void) {
+   unsigned t = iteration_length_cycles ? (carrefour_hook_stats.time_spent_in_migration_2M * 100UL) / (iteration_length_cycles * num_online_cpus()) : 0;
+
+   
+   /*__DEBUG("THROTTLE: %llu %llu %u\n", 
+         (long long unsigned) carrefour_hook_stats.time_spent_in_migration_2M, 
+         (long long unsigned) iteration_length_cycles * num_online_cpus(), 
+         ret);*/
+
+   return carrefour_options.throttle_2M_migrations_limit ? t < carrefour_options.throttle_2M_migrations_limit : 1;
+}
+
 static int __init carrefour_hooks_init(void) {
+   dfs_dir_entry = debugfs_create_dir("carrefour", NULL);
+   dfs_it_length = debugfs_create_u64("iteration_length_cycles", 0666, dfs_dir_entry, &iteration_length_cycles);
+
    printk("Initializing Carrefour hooks\n");
    reset_carrefour_hooks();
    return 0;

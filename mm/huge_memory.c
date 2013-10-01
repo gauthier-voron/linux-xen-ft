@@ -32,6 +32,8 @@
 #include <linux/module.h>
 #include <linux/debugfs.h>
 
+#include <linux/carrefour-hooks.h>
+
 /*
  * By default transparent hugepage support is enabled for all mappings
  * and khugepaged scans all mappings. Defrag is only invoked by
@@ -1474,6 +1476,11 @@ int do_huge_pmd_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	}*/
   
    /* FGAUD */ 
+   if(!migration_allowed_2M()) {
+      put_page(page);
+      goto clear_pmdnuma;
+   }
+
    target_nid = page->dest_node;
    if(unlikely(current_nid == target_nid)) {
       put_page(page);

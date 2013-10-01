@@ -8,6 +8,7 @@ struct carrefour_options_t {
    int use_balance_numa_rate_limit;
    int sync_thp_migration;
    int async_4k_migrations;
+   int throttle_2M_migrations_limit; // In percent, 0 = no limit
 };
 extern struct carrefour_options_t carrefour_options;
 
@@ -64,5 +65,6 @@ struct carrefour_options_t get_carrefour_hooks_conf(void);
 
 enum thp_states get_thp_state(void);
 void set_thp_state(enum thp_states state);
- 
+
+unsigned migration_allowed_2M(void);
 #endif
