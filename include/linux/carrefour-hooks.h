@@ -12,8 +12,11 @@ struct carrefour_options_t {
 extern struct carrefour_options_t carrefour_options;
 
 struct carrefour_hook_stats_t {
-   u64 time_spent_in_migration;
-   u64 s_migrate_nb_calls;
+   u64 time_spent_in_migration_4k;
+   u64 nr_4k_migrations;
+
+   u64 time_spent_in_migration_2M;
+   u64 nr_2M_migrations;
 
    u64 time_spent_in_split;
    u64 split_nb_calls;
@@ -52,10 +55,12 @@ struct task_struct * get_task_struct_from_pid(int pid);
 
 int is_valid_pid(int pid);
 
-void reset_carrefour_hooks(void);
 void reset_carrefour_stats(void);
-void configure_carrefour(struct carrefour_options_t options);
 struct carrefour_hook_stats_t* get_carrefour_hook_stats(void);
+
+void reset_carrefour_hooks(void);
+void configure_carrefour_hooks(struct carrefour_options_t options);
+struct carrefour_options_t get_carrefour_hooks_conf(void);
 
 enum thp_states get_thp_state(void);
 void set_thp_state(enum thp_states state);

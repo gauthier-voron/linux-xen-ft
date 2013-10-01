@@ -165,10 +165,15 @@ void reset_carrefour_hooks (void) {
 EXPORT_SYMBOL(reset_carrefour_hooks);
 
 
-void configure_carrefour(struct carrefour_options_t options) {
+void configure_carrefour_hooks(struct carrefour_options_t options) {
    carrefour_options = options;
 }
-EXPORT_SYMBOL(configure_carrefour);
+EXPORT_SYMBOL(configure_carrefour_hooks);
+
+struct carrefour_options_t get_carrefour_hooks_conf(void) {
+   return carrefour_options;
+}
+EXPORT_SYMBOL(get_carrefour_hooks_conf);
 
 
 struct carrefour_hook_stats_t* get_carrefour_hook_stats(void) {
@@ -348,8 +353,14 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
                DEBUG_WARNING("[WARNING] Migration of pages on node %d failed !\n", i);
                putback_lru_pages(migratepages_nodes[i]);
             }
+            else {
+               carrefour_hook_stats.nr_4k_migrations ++;
+            }
          }
       }
+
+      rdtscll(end);
+      carrefour_hook_stats.time_spent_in_migration_4k += (end - start);
    }
 
    up_read(&mm->mmap_sem);
@@ -361,10 +372,6 @@ out_clean:
          kfree(migratepages_nodes[i]);
       }
    }
-
-   rdtscll(end);
-   carrefour_hook_stats.time_spent_in_migration += (end - start);
-   carrefour_hook_stats.s_migrate_nb_calls ++;
 
    return err;
 }
@@ -438,6 +445,7 @@ int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * 
             }
             else {
                INCR_REP_STAT_VALUE(migr_2M_from_to_node[current_node][nodes[i]], 1);
+               carrefour_hook_stats.nr_2M_migrations++;
             }
          }
       }
@@ -447,7 +455,7 @@ int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * 
    mmput(mm);
 
    rdtscll(end_migr);
-   carrefour_hook_stats.time_spent_in_migration = (end_migr - start_migr);
+   carrefour_hook_stats.time_spent_in_migration_2M = (end_migr - start_migr);
 
    return 0;
 }

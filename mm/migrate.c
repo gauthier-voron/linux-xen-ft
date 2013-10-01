@@ -1618,7 +1618,10 @@ int migrate_misplaced_page(struct page *page, int node)
 	pg_data_t *pgdat = NODE_DATA(node);
 	int isolated;
 	int nr_remaining;
+   unsigned long start, end;
 	LIST_HEAD(migratepages);
+
+   rdtscll(start);
 
 	/*
 	 * Don't migrate pages that are mapped in multiple processes.
@@ -1648,12 +1651,21 @@ int migrate_misplaced_page(struct page *page, int node)
 	} else {
 		count_vm_numa_event(NUMA_PAGE_MIGRATE);
       INCR_REP_STAT_VALUE(migr_4k_from_to_node[page_to_nid(page)][node], 1);
+
+      carrefour_hook_stats.nr_4k_migrations++;
    }
 	BUG_ON(!list_empty(&migratepages));
+
+   rdtscll(end);
+   carrefour_hook_stats.time_spent_in_migration_4k += (end - start);
 	return isolated;
 
 out:
 	put_page(page);
+
+   rdtscll(end);
+   carrefour_hook_stats.time_spent_in_migration_4k += (end - start);
+
 	return 0;
 }
 #endif /* CONFIG_NUMA_BALANCING */
@@ -1679,6 +1691,9 @@ int migrate_misplaced_transhuge_page(struct mm_struct *mm,
 
    /** FGAUD **/
 	int current_node = page_to_nid(page);
+   unsigned long start, end;
+
+   rdtscll(start);
 
 	/*
 	 * Don't migrate pages that are mapped in multiple processes.
@@ -1783,11 +1798,15 @@ int migrate_misplaced_transhuge_page(struct mm_struct *mm,
 
    /** FGAUD: Stats **/
    INCR_REP_STAT_VALUE(migr_2M_from_to_node[current_node][node], 1);
+   carrefour_hook_stats.nr_2M_migrations++;
 
 out:
 	mod_zone_page_state(page_zone(page),
 			NR_ISOLATED_ANON + page_lru,
 			-HPAGE_PMD_NR);
+
+   rdtscll(end);
+   carrefour_hook_stats.time_spent_in_migration_2M += (end - start); 
 	return isolated;
 
 out_fail:
@@ -1795,6 +1814,10 @@ out_fail:
 out_dropref:
 	unlock_page(page);
 	put_page(page);
+
+   rdtscll(end);
+   carrefour_hook_stats.time_spent_in_migration_2M += (end - start); 
+
 	return 0;
 }
 #endif /* CONFIG_NUMA_BALANCING */
