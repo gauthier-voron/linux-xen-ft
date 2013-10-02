@@ -92,6 +92,8 @@
 
 #include <asm/tlb.h>
 
+#include <linux/carrefour-hooks.h>
+
 #define allocate_work_list_item() (kmem_cache_alloc(work_cachep, GFP_KERNEL))
 #define free_work_list_item(item) (kmem_cache_free(work_cachep, (item)))
 
@@ -759,11 +761,12 @@ static int get_lock_contention(struct seq_file *m, void* v)
    div = rdt * num_online_cpus();
    
    if(rdt) {
-      seq_printf(m, "%lu %lu %lu %lu %lu %lu %lu\n",
+      seq_printf(m, "%lu %lu %lu %lu %lu %lu %lu %llu\n",
             (current_time_prof.timelock * 100) / div, (current_time_prof.timespinlock * 100) / div,
             (current_time_prof.timemmap * 100) / current_time_prof.timewlock, (current_time_prof.timebrk * 100) / current_time_prof.timewlock, 
             (current_time_prof.timemunmap * 100) / current_time_prof.timewlock, (current_time_prof.timemprotect * 100) / current_time_prof.timewlock,
-            (current_time_prof.timepgflt * 100) / rdt
+            (current_time_prof.timepgflt * 100) / rdt,
+            ((carrefour_hook_stats.time_spent_in_migration_2M + carrefour_hook_stats.time_spent_in_migration_4k) * 100) / div
          );
    }
 
