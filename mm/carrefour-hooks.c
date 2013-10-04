@@ -17,11 +17,15 @@ struct carrefour_options_t carrefour_default_options = {
    .page_bouncing_fix_2M = 0,
    .use_balance_numa_api = 0,
    .async_4k_migrations  = 0,
+   .throttle_4k_migrations_limit = 0,
    .throttle_2M_migrations_limit = 0,
 };
 
 struct carrefour_options_t carrefour_options;
 struct carrefour_hook_stats_t carrefour_hook_stats;
+
+DEFINE_RWLOCK(carrefour_hook_stats_lock);
+DEFINE_PER_CPU(struct carrefour_migration_stats_t, carrefour_migration_stats);
 
 static struct dentry *dfs_dir_entry;
 static struct dentry *dfs_it_length;
@@ -161,7 +165,15 @@ out_locked:
 EXPORT_SYMBOL(page_status_for_carrefour);
 
 void reset_carrefour_stats (void) {
+   int i = 0;
+   write_lock(&carrefour_hook_stats_lock);
    memset(&carrefour_hook_stats, 0, sizeof(struct carrefour_hook_stats_t));
+   for(i = 0; i < num_online_cpus(); i++) {
+      struct carrefour_migration_stats_t * stats_cpu = per_cpu_ptr(&carrefour_migration_stats, i);
+      memset(stats_cpu, 0, sizeof(struct carrefour_migration_stats_t));
+   }
+
+   write_unlock(&carrefour_hook_stats_lock);
 }
 EXPORT_SYMBOL(reset_carrefour_stats);
 
@@ -184,8 +196,22 @@ struct carrefour_options_t get_carrefour_hooks_conf(void) {
 EXPORT_SYMBOL(get_carrefour_hooks_conf);
 
 
-struct carrefour_hook_stats_t* get_carrefour_hook_stats(void) {
-   return &carrefour_hook_stats;
+struct carrefour_hook_stats_t get_carrefour_hook_stats(void) {
+   struct carrefour_hook_stats_t stats;
+   int i;
+
+   write_lock(&carrefour_hook_stats_lock);
+   stats = carrefour_hook_stats;
+   stats.time_spent_in_migration_4k = 0;
+   stats.time_spent_in_migration_2M = 0;
+   for(i = 0; i < num_online_cpus(); i++) {
+      struct carrefour_migration_stats_t * stats_cpu = per_cpu_ptr(&carrefour_migration_stats, i);
+      stats.time_spent_in_migration_4k += stats_cpu->time_spent_in_migration_4k;
+      stats.time_spent_in_migration_2M += stats_cpu->time_spent_in_migration_2M;
+   }
+   write_unlock(&carrefour_hook_stats_lock);
+
+   return stats;
 }
 EXPORT_SYMBOL(get_carrefour_hook_stats);
 
@@ -203,6 +229,8 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
 
    int i = 0;
    int err = 0;
+
+   unsigned migrated = 0;
 
    u64 start, end;
 
@@ -302,7 +330,7 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
       if(use_balance_numa_api && !carrefour_options.async_4k_migrations) {
          pte_unmap_unlock(pte, ptl);
 
-         if(migrate_misplaced_page(page, nodes[i])) {
+         if(migration_allowed_4k() && migrate_misplaced_page(page, nodes[i])) {
             //__DEBUG("Migrating page 0x%lx\n", addr);
          }
          else {
@@ -362,13 +390,14 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
                putback_lru_pages(migratepages_nodes[i]);
             }
             else {
-               carrefour_hook_stats.nr_4k_migrations ++;
+               migrated++;
             }
          }
       }
 
       rdtscll(end);
-      carrefour_hook_stats.time_spent_in_migration_4k += (end - start);
+
+      INCR_MIGR_STAT_VALUE(4k, (end - start), migrated);
    }
 
    up_read(&mm->mmap_sem);
@@ -396,7 +425,7 @@ int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * 
    struct mm_struct *mm = NULL;
 
    int i = 0;
-   uint64_t start_migr, end_migr;
+   uint64_t start_migr, end_migr, migrated = 0;
    rdtscll(start_migr);
 
    rcu_read_lock();
@@ -453,7 +482,7 @@ int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * 
             }
             else {
                INCR_REP_STAT_VALUE(migr_2M_from_to_node[current_node][nodes[i]], 1);
-               carrefour_hook_stats.nr_2M_migrations++;
+               migrated = 1;
             }
          }
       }
@@ -463,8 +492,8 @@ int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * 
    mmput(mm);
 
    rdtscll(end_migr);
-   carrefour_hook_stats.time_spent_in_migration_2M = (end_migr - start_migr);
 
+   INCR_MIGR_STAT_VALUE(2M, (end_migr - start_migr), migrated);
    return 0;
 }
 EXPORT_SYMBOL(s_migrate_hugepages);
@@ -744,23 +773,54 @@ EXPORT_SYMBOL(set_thp_state);
 
 
 unsigned migration_allowed_2M(void) {
-   unsigned t = iteration_length_cycles ? (carrefour_hook_stats.time_spent_in_migration_2M * 100UL) / (iteration_length_cycles * num_online_cpus()) : 0;
+   unsigned t;
+   struct carrefour_migration_stats_t* stats;
 
-   
+   read_lock(&carrefour_hook_stats_lock);
+   stats = get_cpu_ptr(&carrefour_migration_stats);
+
+   t = iteration_length_cycles ? (stats->time_spent_in_migration_2M * 100UL) / (iteration_length_cycles) : 0;
+
+   put_cpu_ptr(&carrefour_migration_stats);
+   read_unlock(&carrefour_hook_stats_lock);
+
    /*__DEBUG("THROTTLE: %llu %llu %u\n", 
          (long long unsigned) carrefour_hook_stats.time_spent_in_migration_2M, 
          (long long unsigned) iteration_length_cycles * num_online_cpus(), 
-         ret);*/
+         t);*/
 
    return carrefour_options.throttle_2M_migrations_limit ? t < carrefour_options.throttle_2M_migrations_limit : 1;
+}
+
+unsigned migration_allowed_4k(void) {
+   unsigned t;
+   struct carrefour_migration_stats_t* stats;
+
+   read_lock(&carrefour_hook_stats_lock);
+   stats = get_cpu_ptr(&carrefour_migration_stats);
+
+   t = iteration_length_cycles ? (stats->time_spent_in_migration_4k * 100UL) / (iteration_length_cycles) : 0;
+
+   put_cpu_ptr(&carrefour_migration_stats);
+   read_unlock(&carrefour_hook_stats_lock);
+
+   /*__DEBUG("THROTTLE: %llu %llu %u\n", 
+         (long long unsigned) carrefour_hook_stats.time_spent_in_migration_4k[smp_processor_id()], 
+         (long long unsigned) iteration_length_cycles * num_online_cpus(), 
+         t);*/
+
+   return carrefour_options.throttle_4k_migrations_limit ? t < carrefour_options.throttle_4k_migrations_limit : 1;
 }
 
 static int __init carrefour_hooks_init(void) {
    dfs_dir_entry = debugfs_create_dir("carrefour", NULL);
    dfs_it_length = debugfs_create_u64("iteration_length_cycles", 0666, dfs_dir_entry, &iteration_length_cycles);
 
+   rwlock_init(&carrefour_hook_stats_lock);
+
    printk("Initializing Carrefour hooks\n");
    reset_carrefour_hooks();
+
    return 0;
 }
 module_init(carrefour_hooks_init)

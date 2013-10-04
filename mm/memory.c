@@ -70,6 +70,7 @@
 #include "internal.h"
 
 #include <linux/replicate.h>
+#include <linux/carrefour-hooks.h>
 
 #ifdef LAST_NID_NOT_IN_PAGE_FLAGS
 #warning Unfortunate NUMA and NUMA Balancing config, growing page-frame for last_nid.
@@ -3649,6 +3650,11 @@ int do_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		return 0;
 	}
 
+   if(!migration_allowed_4k()) {
+		pte_unmap_unlock(ptep, ptl);
+		return 0;
+   }
+      
    if(unlikely(PageReplication(page))) {
       DEBUG_PANIC("Not supported yet");
    }

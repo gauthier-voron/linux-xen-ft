@@ -761,12 +761,21 @@ static int get_lock_contention(struct seq_file *m, void* v)
    div = rdt * num_online_cpus();
    
    if(rdt) {
+      u64 total_migr = 0;
+
+      write_lock(&carrefour_hook_stats_lock);
+      for(i = 0; i < num_online_cpus(); i++) {
+         struct carrefour_migration_stats_t * stats = per_cpu_ptr(&carrefour_migration_stats, i);
+         total_migr += stats->time_spent_in_migration_2M + stats->time_spent_in_migration_4k;
+      }
+      write_unlock(&carrefour_hook_stats_lock);
+
       seq_printf(m, "%lu %lu %lu %lu %lu %lu %lu %llu\n",
             (current_time_prof.timelock * 100) / div, (current_time_prof.timespinlock * 100) / div,
             (current_time_prof.timemmap * 100) / current_time_prof.timewlock, (current_time_prof.timebrk * 100) / current_time_prof.timewlock, 
             (current_time_prof.timemunmap * 100) / current_time_prof.timewlock, (current_time_prof.timemprotect * 100) / current_time_prof.timewlock,
             (current_time_prof.timepgflt * 100) / rdt,
-            ((carrefour_hook_stats.time_spent_in_migration_2M + carrefour_hook_stats.time_spent_in_migration_4k) * 100) / div
+            (total_migr * 100) / div
          );
    }
 
