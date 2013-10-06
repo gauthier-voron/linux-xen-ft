@@ -817,6 +817,8 @@ static int display_replication_stats(struct seq_file *m, void* v)
    unsigned long time_pgfault  = 0;
    unsigned long nr_migrations = 0;
 
+   unsigned long max_time_pgflt = 0;
+
    seq_printf(m, "#Number of online cpus: %d\n", num_online_cpus());
    seq_printf(m, "#Number of online nodes: %d\n", num_online_nodes());
 
@@ -838,6 +840,11 @@ static int display_replication_stats(struct seq_file *m, void* v)
             // We don't want to automerge this one
             continue;
          }
+
+         if((((uint64_t*) stats) + i == &stats->time_spent_in_pgfault_handler) && (((uint64_t*) stats)[i] > max_time_pgflt)) {
+            max_time_pgflt = ((uint64_t*) stats)[i];
+         }
+
          ((uint64_t *) global_stats)[i] += ((uint64_t*) stats)[i];
       }
 
@@ -878,6 +885,7 @@ static int display_replication_stats(struct seq_file *m, void* v)
 
    seq_printf(m, "[GLOBAL] Number of page faults: %lu\n", (unsigned long) global_stats->nr_pgfault);
    seq_printf(m, "[GLOBAL] Time spent in the page fault handler: %lu cycles\n\n", time_pgfault);
+   seq_printf(m, "[GLOBAL] Max time spent in the page fault handler: %lu cycles (total on one core)\n\n", max_time_pgflt);
 
    seq_printf(m, "[GLOBAL] 4k pages:\n");
    seq_printf(m, "[GLOBAL] Number of pages freed (i.e, approx. total number of pages): %lu\n", (unsigned long) global_stats->nr_4k_pages_freed);
