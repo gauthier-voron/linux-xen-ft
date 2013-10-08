@@ -15,7 +15,6 @@
 struct carrefour_options_t carrefour_default_options = {
    .page_bouncing_fix_4k = 0,
    .page_bouncing_fix_2M = 0,
-   .use_balance_numa_api = 0,
    .async_4k_migrations  = 0,
    .throttle_4k_migrations_limit = 0,
    .throttle_2M_migrations_limit = 0,
@@ -224,43 +223,12 @@ struct carrefour_hook_stats_t get_carrefour_hook_stats(void) {
 }
 EXPORT_SYMBOL(get_carrefour_hook_stats);
 
-static struct page *new_page_node(struct page *p, unsigned long on_node, int **result)
-{
-	return alloc_pages_exact_node(on_node, GFP_HIGHUSER_MOVABLE | GFP_THISNODE, 0);
-}
-
-int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * nodes) {
+int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * nodes, int throttle) {
    struct task_struct *task;
    struct mm_struct *mm = NULL;
-   struct list_head * migratepages_nodes[MAX_NUMNODES];
-
-   int use_balance_numa_api = carrefour_options.use_balance_numa_api;
 
    int i = 0;
    int err = 0;
-
-   unsigned migrated = 0;
-
-   u64 start, end;
-
-
-   rdtscll(start);
-
-   if(!use_balance_numa_api) {
-      for(i = 0; i < num_online_nodes(); i++) {
-         migratepages_nodes[i] = kmalloc(sizeof (struct list_head), GFP_KERNEL);
-         if(!migratepages_nodes[i]) {
-            int j;
-            for(j = 0; j < i; j++) {
-               kfree(migratepages_nodes[j]);
-            }
-
-            DEBUG_WARNING("Cannot allocate memory !\n");
-            return -ENOMEM;
-         }
-         INIT_LIST_HEAD(migratepages_nodes[i]);
-      }
-   }
 
    rcu_read_lock();
    task = find_task_by_vpid(pid);
@@ -336,17 +304,20 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
          continue;
       }
 
-      if(use_balance_numa_api && !carrefour_options.async_4k_migrations) {
+      if(throttle || !carrefour_options.async_4k_migrations) {
+         unsigned allowed = migration_allowed_4k();
          pte_unmap_unlock(pte, ptl);
 
-         if(migration_allowed_4k() && migrate_misplaced_page(page, nodes[i])) {
+         if(allowed && migrate_misplaced_page(page, nodes[i])) {
             //__DEBUG("Migrating page 0x%lx\n", addr);
          }
          else {
+            if(!allowed)
+               __DEBUG("migration was not allowed\n");
             //DEBUG_WARNING("[WARNING] Migration of page 0x%lx failed !\n", addr);
          }
       }
-      else if (use_balance_numa_api) {
+      else {
          pte_t new_pte = *pte;
          pte_unmap_unlock(pte, ptl);
 
@@ -371,54 +342,12 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
          unlock_page(page);
          put_page(page);
       }
-      else {
-         pte_unmap_unlock(pte, ptl);
-
-         /** Similar to migrate.c : Batching migrations **/
-         if(!isolate_lru_page(page)) {
-            //__DEBUG("Migrating page 0x%lx\n", addr);
-            list_add_tail(&page->lru, migratepages_nodes[nodes[i]]);
-            inc_zone_page_state(page, NR_ISOLATED_ANON + page_is_file_cache(page));
-
-            /** Not very precise because migration can fail **/
-            INCR_REP_STAT_VALUE(migr_4k_from_to_node[current_node][nodes[i]], 1);
-         }
-         else {
-            //DEBUG_WARNING("[WARNING] Migration of page 0x%lx failed !\n", addr);
-         }
-         put_page(page);
-      }
-   }
-
-   if(! use_balance_numa_api) {
-      for(i = 0; i < num_online_nodes(); i++) {
-         if (!list_empty(migratepages_nodes[i])) {
-            err = migrate_pages(migratepages_nodes[i], new_page_node, i, MIGRATE_SYNC, MR_NUMA_MISPLACED);
-            if (err) {
-               DEBUG_WARNING("[WARNING] Migration of pages on node %d failed !\n", i);
-               putback_lru_pages(migratepages_nodes[i]);
-            }
-            else {
-               migrated++;
-            }
-         }
-      }
-
-      rdtscll(end);
-
-      INCR_MIGR_STAT_VALUE(4k, (end - start), migrated);
    }
 
    up_read(&mm->mmap_sem);
    mmput(mm);
 
 out_clean:
-   if(!use_balance_numa_api) {
-      for(i = 0; i < num_online_nodes(); i++) {
-         kfree(migratepages_nodes[i]);
-      }
-   }
-
    return err;
 }
 EXPORT_SYMBOL(s_migrate_pages);

@@ -3650,11 +3650,6 @@ int do_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
 		return 0;
 	}
 
-   if(!migration_allowed_4k()) {
-		pte_unmap_unlock(ptep, ptl);
-		return 0;
-   }
-      
    if(unlikely(PageReplication(page))) {
       DEBUG_PANIC("Not supported yet");
    }

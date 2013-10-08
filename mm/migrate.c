@@ -1546,7 +1546,7 @@ bool numamigrate_update_ratelimit(pg_data_t *pgdat, unsigned long nr_pages)
 {
 	bool rate_limited = false;
 
-   if(! carrefour_options.use_balance_numa_rate_limit) {
+   if(1) {
       return false;
    }
 

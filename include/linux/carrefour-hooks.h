@@ -4,8 +4,6 @@
 struct carrefour_options_t {
    int page_bouncing_fix_4k;
    int page_bouncing_fix_2M;
-   int use_balance_numa_api;
-   int use_balance_numa_rate_limit;
    int sync_thp_migration;
    int async_4k_migrations;
    int throttle_4k_migrations_limit; // In percent, 0 = no limit
@@ -66,7 +64,7 @@ int page_status_for_carrefour(int pid, unsigned long addr, int * alread_treated,
 // -1 if the address is invalid, 0 if regular, 1 if trans_huge
 int is_huge_addr_sloppy (int pid, unsigned long addr);
 
-int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * nodes);
+int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * nodes, int throttle);
 int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * nodes);
 int find_and_migrate_thp(int pid, unsigned long addr, int to_node);
 
