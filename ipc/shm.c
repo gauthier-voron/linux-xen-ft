@@ -1260,3 +1260,12 @@ static int sysvipc_shm_proc_show(struct seq_file *s, void *it)
 			  swp * PAGE_SIZE);
 }
 #endif
+
+/** FGAUD **/
+int is_shm(struct vm_area_struct *vma) {
+   if(!vma || !vma->vm_ops) {
+      return 0;
+   }
+
+   return (vma->vm_ops->fault == shm_fault);
+}

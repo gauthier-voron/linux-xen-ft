@@ -12,6 +12,10 @@
 #include <linux/carrefour-hooks.h>
 #include <linux/replicate.h>
 
+// EXTERNAL EXPORTS
+EXPORT_SYMBOL(find_task_by_vpid);
+EXPORT_SYMBOL(is_shm);
+
 struct carrefour_options_t carrefour_default_options = {
    .page_bouncing_fix_4k = 0,
    .page_bouncing_fix_2M = 0,

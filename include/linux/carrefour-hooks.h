@@ -57,6 +57,8 @@ enum thp_states{
 #define ENOTMISPLACED   68
 #define EBOUNCINGFIX    69
 
+int is_shm(struct vm_area_struct *vma);
+
 // Returns 0 if the page is present, -<error> otherwise
 // If the page is a regular huge page huge = 1, huge = 2 if it is a THP, huge = 0 otherwise
 int page_status_for_carrefour(int pid, unsigned long addr, int * alread_treated, int * huge);
