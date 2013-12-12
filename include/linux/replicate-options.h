@@ -37,4 +37,49 @@
 
 #define PROCFS_REPLICATE_STATS_FN   "carrefour_replication_stats"
 
+
+#if WITH_DEBUG_LOCKS
+#ifndef CONFIG_DEBUG_SPINLOCK
+#error "DEBUG_LOCKS requires CONFIG_DEBUG_SPINLOCK"
+#endif
+
+//op = 0 --> wait, op = 1 --> acquire, op = 2 --> release
+#define __DEBUG_LOCKS(op, lock, fun, lock_wait, lock_owns, lock_fun) { \
+   if(op == 0) {\
+      lock_wait = lock; \
+      lock_fun  = fun; \
+   } \
+   else if (op == 1) { \
+      lock_wait = NULL; \
+      lock_owns = lock; \
+      lock_fun  = fun; \
+   } \
+   else { \
+      lock_wait = NULL; \
+      lock_owns = NULL; \
+      lock_fun  = NULL; \
+   } \
+}
+
+#define DEBUG_SEM_LOCKS(op, type) { \
+   __DEBUG_LOCKS(op, sem, __builtin_return_address(0), current->rw_lock_sem_wait, current->rw_lock_sem_owns, current->rw_lock_fun); \
+   current->rw_lock_type = type; \
+}
+
+#define DEBUG_SPIN_LOCKS(op) { \
+   __DEBUG_LOCKS(op, lock, __builtin_return_address(0), current->spinlock_lock_wait, current->spinlock_lock_owns, current->spinlock_fun); \
+   if(op == 2) { \
+      lock->owner = NULL; \
+   } \
+   else if (op == 1) { \
+      lock->owner = current; \
+   } \
+}
+
+#else
+#define DEBUG_SEM_LOCKS(op, type) do {} while(0)
+#define DEBUG_SPIN_LOCKS(op) do {} while(0)
+
+#endif //DEBUG_LOCKS
+
 #endif

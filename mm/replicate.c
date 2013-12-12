@@ -110,7 +110,7 @@ struct dup_infos {
 
 struct work_list_item {
 	struct list_head list;
-   struct mm_struct * mm;
+   pid_t tgid;
    unsigned long start;
    unsigned long len;
    int behavior;
@@ -136,44 +136,59 @@ DEFINE_PER_CPU(replication_stats_t, replication_stats_per_core);
 static int dup_page_table(struct mm_struct *mm, pgd_t *src_pgd, pgd_t *dest_pgd);
 /** END **/
 
+static struct mm_struct* __get_mm_from_tgid(pid_t tgid) {
+   struct task_struct *tsk;
+   struct mm_struct *mm;
+
+   rcu_read_lock();
+   tsk = find_task_by_vpid(tgid);
+
+   if(unlikely(!tsk)) {
+      rcu_read_unlock();
+      return NULL;
+   }
+
+   get_task_struct(tsk);
+   rcu_read_unlock();
+
+   mm = get_task_mm(tsk); 
+   put_task_struct(tsk);
+
+   if(!mm) {
+      return NULL;
+   }
+
+   return mm;
+}
+
 int replicate_madvise(pid_t tgid, unsigned long start, unsigned long len, int advice)
 {
    struct work_list_item *new_work;
-   struct task_struct *tsk;
+   struct mm_struct *mm;
 
    if(!work_thread) {
       DEBUG_REPTHREAD("repd is not running. Ignoring.\n");
       return EREPD_NOT_RUNNING;
    }
 
+   /** Makes sure that the mm exists **/
+   mm = __get_mm_from_tgid(tgid);
+   if(!mm) {
+      DEBUG_REPTHREAD("Cannot find mm for tgid %d\n", tgid);
+      return EPID_NOTFOUND;
+   }
+   mmput(mm);
+
    new_work = allocate_work_list_item();
    if(!new_work) {
+      mmput(mm);
       DEBUG_PANIC("Cannot allocate a new_work\n");
    }
 
-   rcu_read_lock();
-   tsk = find_task_by_vpid(tgid);
-
-   if(unlikely(!tsk || !tsk->mm)) {
-      DEBUG_REPTHREAD("What am I suppose to do? (tgid = %d, tsk = %p, tsk->mm = %p)\n", tgid, tsk, tsk ? tsk->mm : NULL);
-
-      free_work_list_item(new_work);
-
-      rcu_read_unlock();
-      return EPID_NOTFOUND;
-   }
-
    new_work->start = start;
-   new_work->mm = tsk->mm;
+   new_work->tgid = tgid;
    new_work->len = len;
    new_work->behavior = advice;
-
-   /* Always increase ref count, work thread will decrement
-    * upon item completion
-    */
-   atomic_inc(&tsk->mm->mm_count);
-
-   rcu_read_unlock();
 
    spin_lock(&work_list_lock);
    list_add(&new_work->list, &work_list);
@@ -302,6 +317,7 @@ static int create_replicated_pgds(struct mm_struct * mm) {
       int err;
       mm->pgd_node[node] = rep_pgd_alloc(mm);
       if(mm->pgd_node[node] == NULL) {
+         up_write(&mm->mmap_sem);
          DEBUG_PANIC("pgd allocation failed\n");
       }
 
@@ -310,7 +326,7 @@ static int create_replicated_pgds(struct mm_struct * mm) {
    }
    DEBUG_REPTHREAD("MM lock %p\n", &mm->mmap_sem);
 
-   atomic_inc(&mm->mm_count);
+   //atomic_inc(&mm->mm_count);
 
    /** Everything is consistent, we can set the mm as replicated **/
    mm->replicated_mm = 1;
@@ -325,6 +341,15 @@ static int create_replicated_pgds(struct mm_struct * mm) {
 static inline struct page* rep_find_page(struct mm_struct *mm, struct vm_area_struct * vma, unsigned long address, pte_t * pte) {
    struct page *page;
 
+   if(!pte_write(*pte)) {
+      DEBUG_REPTHREAD("Tried to replicate a write-protected page, ignoring\n");
+      return NULL;
+   }
+   else if(pte_flags(*pte) & _PAGE_PROTNONE) {
+      DEBUG_REPTHREAD("Tried to replicate a rw-protected page, ignoring\n");
+      return NULL;
+   }
+
    page = vm_normal_page(vma, address, *pte);
    if (page) {
       if(PageAnon(page)) {
@@ -335,12 +360,7 @@ static inline struct page* rep_find_page(struct mm_struct *mm, struct vm_area_st
             DEBUG_REPTHREAD("Tried to replicate an old replicated page, ignoring\n");
          }
          else {
-            if(!pte_write(*pte)) {
-               DEBUG_REPTHREAD("Tried to replicate a write-protected page, ignoring\n");
-            }
-            else {
-               goto out;
-            }
+            goto out;
          }
       }
       else {
@@ -584,6 +604,10 @@ static int rep_work_thread(void *nothing)
    int last_online_cpu = 0, cpu;
    struct cpumask dstp;
 
+   struct mm_struct* mm = NULL;
+
+   LIST_HEAD(work_list_internal);
+
    work_task = current;
 
    /** To ease the debug, we want to make sure that this thread is pinned on the last available CPU **/
@@ -609,19 +633,31 @@ static int rep_work_thread(void *nothing)
 
       list_for_each_safe(pos, q, &work_list) {
          work = list_entry(pos, struct work_list_item, list);
-         spin_unlock(&work_list_lock);
+         list_del(pos);
 
-         if(!work_thread) {
-            goto exit;
+         // Copy everything in our internal list
+         list_add(&work->list, &work_list_internal);
+      }
+
+      spin_unlock(&work_list_lock);
+
+      if(!work_thread) {
+         // TODO: free things
+         goto exit;
+      }
+
+      list_for_each_safe(pos, q, &work_list_internal) {
+         work = list_entry(pos, struct work_list_item, list);
+
+         mm = __get_mm_from_tgid(work->tgid);
+         if(!mm) {
+            DEBUG_REPTHREAD("Cannot find mm for tgid %d\n", tgid);
+            continue;
          }
 
          work->start &= PAGE_MASK;
          /* end calculation is from madvise */
          end = work->start + ((work->len + ~PAGE_MASK) & PAGE_MASK);
-
-         if(!work->mm) {
-            continue;
-         }
 
          if(work->behavior == MADV_REPLICATE) {
             int has_created_pgds;
@@ -629,24 +665,21 @@ static int rep_work_thread(void *nothing)
 
             DEBUG_REPTHREAD("New message received (start = %lu work->start, end = %lu)\n", work->start, end);
 
-#if WITH_DEBUG_LOCKS
-            DEBUG_PRINT("Acquiring writer lock %p (caller %p)\n", &work->mm->mmap_sem, rep_work_thread);
-#endif
-            down_read(&work->mm->mmap_sem);
-#if WITH_DEBUG_LOCKS
-            DEBUG_PRINT("Acquired writer lock %p (caller %p)\n", &work->mm->mmap_sem, rep_work_thread);
-#endif
+            down_read(&mm->mmap_sem);
 
             if(!work_thread) {
+               up_read(&mm->mmap_sem);
+               mmput(mm);
+
                goto exit;
             }
 
             /* find_or_insert_group will grab the group sem in write mode */
-            has_created_pgds = create_replicated_pgds(work->mm);
+            has_created_pgds = create_replicated_pgds(mm);
 
 #if ! FAKE_REPLICATION
             /* set replication flag on pages and remove from slaves */
-            has_replicated_page = rep_update_pages(work->mm, work->start, end, MADV_REPLICATE);
+            has_replicated_page = rep_update_pages(mm, work->start, end, MADV_REPLICATE);
 #endif
 
             DEBUG_REPTHREAD("Message processed properly (start = %lu work->start, end = %lu)\n", work->start, end);
@@ -657,26 +690,21 @@ static int rep_work_thread(void *nothing)
             }
 #endif
 
-            up_read(&work->mm->mmap_sem);
-#if WITH_DEBUG_LOCKS
-            DEBUG_PRINT("Released writer lock %p (caller %p)\n", &work->mm->mmap_sem, rep_work_thread);
-#endif
+            up_read(&mm->mmap_sem);
+            mmput(mm);
          }
          else if(work->behavior == MADV_DONTREPLICATE) {
+            mmput(mm);
             DEBUG_PANIC("Not implemented yet.\n");
          }
          else {
+            mmput(mm);
             DEBUG_PANIC("work_list_item has incorrect flags\n");
          }
 
-
-         atomic_dec(&work->mm->mm_count);
-         spin_lock(&work_list_lock);
          list_del(pos);
          free_work_list_item(work);
       }
-
-      spin_unlock(&work_list_lock);
    }
 
 exit:
@@ -853,6 +881,8 @@ static int display_replication_stats(struct seq_file *m, void* v)
       }
    }
 
+   write_unlock(&reset_stats_rwl);
+
    if(global_stats->nr_readlock_taken) {
       time_rd_lock = (unsigned long) (global_stats->time_spent_acquiring_readlocks / global_stats->nr_readlock_taken);
    }
@@ -922,7 +952,6 @@ static int display_replication_stats(struct seq_file *m, void* v)
 
    kfree(global_stats);
 
-   write_unlock(&reset_stats_rwl);
    return 0;
 }
 
@@ -962,8 +991,7 @@ static int __init replicate_init(void)
 #if ENABLE_STATS
    int cpu;
 #endif
-   work_cachep = kmem_cache_create("work_list_item",
-         sizeof(struct work_list_item), 32, SLAB_PANIC, NULL);
+   work_cachep = kmem_cache_create("work_list_item", sizeof(struct work_list_item), __alignof__(struct work_list_item), SLAB_PANIC, NULL);
 
    work_thread = kthread_run(rep_work_thread, NULL, "repd");
    if(IS_ERR(work_thread))

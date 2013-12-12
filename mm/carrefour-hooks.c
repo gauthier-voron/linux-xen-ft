@@ -339,6 +339,9 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
 
             /** FGAUD: We need to flush the TLB, don't we ? **/
             flush_tlb_page(vma, addr);
+
+            /** And make sure to invalid all copies -- TODO: too many flush **/
+            clear_flush_all_node_copies(mm, vma, addr);
          }
 
          spin_unlock(ptl);

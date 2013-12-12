@@ -1583,6 +1583,19 @@ struct task_struct {
    u64 last_seen_exec;
    u64 last_seen_iteration;
    u64 last_seen_weight;
+
+#if WITH_DEBUG_LOCKS
+   // This is probably redundant with lockdep, but much simpler (and a way more limited)
+   void *                rw_lock_fun;
+   struct rw_semaphore * rw_lock_sem_wait;
+   struct rw_semaphore * rw_lock_sem_owns;
+   int                   rw_lock_type; //0 - read, 1 - write
+
+   void *                spinlock_fun;
+   raw_spinlock_t *      spinlock_lock_wait;
+   raw_spinlock_t *      spinlock_lock_owns;
+#endif
+
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

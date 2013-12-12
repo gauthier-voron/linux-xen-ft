@@ -50,7 +50,7 @@ extern struct task_struct * work_thread;
 #define is_user_addr(addr) ((unsigned long) addr <= TASK_SIZE)
 
 #define __DEBUG(msg, args...)       printk(KERN_DEBUG "[Core %2d, TID %5d, %25.25s, %20.20s:%4d] " msg, smp_processor_id(), current->pid, __FUNCTION__, __FILE__, __LINE__, ##args)
-#define DEBUG_WARNING(msg, args...) printk(KERN_DEBUG "[Core %2d, TID %5d, %25.25s, %20.20s:%4d] (WARNING) " msg, smp_processor_id(), current->pid, __FUNCTION__, __FILE__, __LINE__, ##args)
+#define DEBUG_WARNING(msg, args...) printk(KERN_CRIT "[Core %2d, TID %5d, %25.25s, %20.20s:%4d] (WARNING) " msg, smp_processor_id(), current->pid, __FUNCTION__, __FILE__, __LINE__, ##args)
 
 #define DEBUG_PANIC(msg, args...) { \
    DEBUG_WARNING(msg, ##args); \
@@ -85,16 +85,6 @@ extern struct task_struct * work_thread;
 #else
 #define DEBUG_REP_VV(msg, args...) do {} while (0)
 #define DEBUG_PRINT(msg, args...) do {} while (0)
-#endif
-
-#if WITH_DEBUG_LOCKS
-#define DEBUG_LOCKS(msg, args...) { \
-   if(is_replicated(current->mm)) { \
-      __DEBUG(msg, ##args); \
-   } \
-}
-#else
-#define DEBUG_LOCKS(msg, args...) do {} while (0)
 #endif
 
 /**

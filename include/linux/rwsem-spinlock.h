@@ -27,6 +27,10 @@ struct rw_semaphore {
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 	struct lockdep_map dep_map;
 #endif
+
+#if WITH_DEBUG_LOCKS
+   void* owner;
+#endif
 };
 
 #define RWSEM_UNLOCKED_VALUE		0x00000000

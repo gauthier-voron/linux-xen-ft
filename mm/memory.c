@@ -3644,6 +3644,9 @@ int do_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	set_pte_at(mm, addr, ptep, pte);
 	update_mmu_cache(vma, addr, ptep);
 
+   // PTE has changed. Must update all copies
+   clear_flush_all_node_copies(mm, vma, addr);
+
 	page = vm_normal_page(vma, addr, pte);
 	if (!page) {
 		pte_unmap_unlock(ptep, ptl);
@@ -3651,7 +3654,9 @@ int do_numa_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	}
 
    if(unlikely(PageReplication(page))) {
-      DEBUG_PANIC("Not supported yet");
+      DEBUG_WARNING("Not supported. Cannot migrate a replicated page!");
+		pte_unmap_unlock(ptep, ptl);
+		return 0;
    }
 
 	current_nid = page_to_nid(page);

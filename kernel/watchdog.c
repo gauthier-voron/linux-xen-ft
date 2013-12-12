@@ -316,6 +316,21 @@ static enum hrtimer_restart watchdog_timer_fn(struct hrtimer *hrtimer)
 		printk(KERN_EMERG "BUG: soft lockup - CPU#%d stuck for %us! [%s:%d]\n",
 			smp_processor_id(), duration,
 			current->comm, task_pid_nr(current));
+
+#if WITH_DEBUG_LOCKS
+      printk(KERN_EMERG "RW locks: wait %p , owns %p , fun %p , type %d\n", current->rw_lock_sem_wait, current->rw_lock_sem_owns, current->rw_lock_fun, current->rw_lock_type);
+      printk(KERN_EMERG "\tOwner %p, acquired by %p\n",
+         (current->rw_lock_sem_wait) ? current->rw_lock_sem_wait->owner : NULL,
+         (current->rw_lock_sem_wait && current->rw_lock_sem_wait->owner) ? ((struct task_struct*)current->rw_lock_sem_wait->owner)->spinlock_fun : NULL);
+
+      printk(KERN_EMERG "Spin locks: wait %p , owns %p , fun %p\n", current->spinlock_lock_wait, current->spinlock_lock_owns, current->spinlock_fun);
+      printk(KERN_EMERG "\tOwner %p, acquired by %p\n",
+         (current->spinlock_lock_wait) ? current->spinlock_lock_wait->owner : NULL,
+         (current->spinlock_lock_wait && current->spinlock_lock_wait->owner) ? ((struct task_struct*)current->spinlock_lock_wait->owner)->spinlock_fun : NULL);
+
+      debug_show_held_locks(current);
+#endif
+
 		print_modules();
 		print_irqtrace_events(current);
 		if (regs)

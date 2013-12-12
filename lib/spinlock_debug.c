@@ -13,6 +13,8 @@
 #include <linux/delay.h>
 #include <linux/export.h>
 
+#include <linux/replicate.h>
+
 void __raw_spin_lock_init(raw_spinlock_t *lock, const char *name,
 			  struct lock_class_key *key)
 {
@@ -133,8 +135,13 @@ static void __spin_lock_debug(raw_spinlock_t *lock)
 void do_raw_spin_lock(raw_spinlock_t *lock)
 {
 	debug_spin_lock_before(lock);
+
+   DEBUG_SPIN_LOCKS(0);
+
 	if (unlikely(!arch_spin_trylock(&lock->raw_lock)))
 		__spin_lock_debug(lock);
+
+   DEBUG_SPIN_LOCKS(1);
 	debug_spin_lock_after(lock);
 }
 
@@ -142,8 +149,10 @@ int do_raw_spin_trylock(raw_spinlock_t *lock)
 {
 	int ret = arch_spin_trylock(&lock->raw_lock);
 
-	if (ret)
+	if (ret) {
+      DEBUG_SPIN_LOCKS(1);
 		debug_spin_lock_after(lock);
+   }
 #ifndef CONFIG_SMP
 	/*
 	 * Must not happen on UP:
@@ -157,6 +166,8 @@ void do_raw_spin_unlock(raw_spinlock_t *lock)
 {
 	debug_spin_unlock(lock);
 	arch_spin_unlock(&lock->raw_lock);
+
+   DEBUG_SPIN_LOCKS(2);
 }
 
 static void rwlock_bug(rwlock_t *lock, const char *msg)
