@@ -1545,6 +1545,13 @@ static int do_execve_common(const char *filename,
 	current->in_execve = 0;
 	acct_update_integrals(current);
 	free_bprm(bprm);
+
+   /** FGAUD **/
+   if(clone_callback) {
+      clone_callback(current, 0);
+   }
+   /****/
+
 	if (displaced)
 		put_files_struct(displaced);
 	return retval;

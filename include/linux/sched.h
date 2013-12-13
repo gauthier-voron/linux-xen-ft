@@ -2303,6 +2303,11 @@ extern long do_fork(unsigned long, unsigned long, unsigned long, int __user *, i
 struct task_struct *fork_idle(int);
 extern pid_t kernel_thread(int (*fn)(void *), void *arg, unsigned long flags);
 
+/** FGAUD **/
+typedef void (*clone_callback_t)(struct task_struct*, int clone);
+extern clone_callback_t clone_callback;
+/***********/
+
 extern void set_task_comm(struct task_struct *tsk, char *from);
 extern char *get_task_comm(char *to, struct task_struct *tsk);
 

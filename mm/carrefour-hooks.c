@@ -13,6 +13,7 @@
 #include <linux/replicate.h>
 
 // EXTERNAL EXPORTS
+EXPORT_SYMBOL(sched_setaffinity);
 EXPORT_SYMBOL(find_task_by_vpid);
 EXPORT_SYMBOL(is_shm);
 

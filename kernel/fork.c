@@ -95,6 +95,12 @@ DEFINE_PER_CPU(unsigned long, process_counts) = 0;
 
 __cacheline_aligned DEFINE_RWLOCK(tasklist_lock);  /* outer */
 
+/** FGAUD **/
+// Allow module to set a callback called whenever a new task is created
+clone_callback_t clone_callback = NULL;
+EXPORT_SYMBOL(clone_callback);
+/****/
+
 #ifdef CONFIG_PROVE_RCU
 int lockdep_tasklist_lock_is_held(void)
 {
@@ -1627,6 +1633,12 @@ long do_fork(unsigned long clone_flags,
 			init_completion(&vfork);
 			get_task_struct(p);
 		}
+
+      /** FGAUD **/
+      if(clone_callback) {
+         clone_callback(p, 1);
+      }
+      /****/
 
 		wake_up_new_task(p);
 
