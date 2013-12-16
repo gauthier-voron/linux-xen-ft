@@ -35,6 +35,7 @@ module_param(spread, bool, S_IRUGO);
 static int * cpu_array;
 static int cpu_array_nr;
 static int cpu_array_next = 0;
+static int total_pinned = 0;
 
 static inline int __get_next_cpu(void) {
    int cpu = cpu_array[cpu_array_next]; 
@@ -75,7 +76,7 @@ void new_process_cb(struct task_struct* p, int clone) {
       cpumask_set_cpu(cpu, &dstp);
       sched_setaffinity(p->pid, &dstp);
 
-      printk("Assigning pid %d (%s) to core %d\n", p->pid,  comm, cpu);
+      printk("[TOTAL %5d] Assigning pid %d (%s) to core %d\n", ++total_pinned, p->pid,  comm, cpu);
    }
 }
 
