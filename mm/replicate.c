@@ -1109,6 +1109,10 @@ int revert_replication(struct mm_struct * mm, struct vm_area_struct * vma, unsig
 int find_and_revert_replication(struct mm_struct * mm, struct vm_area_struct * vma, unsigned long address, pte_t * master_pte) {
    struct page * page = pte_page(*master_pte);
 
+   if(unlikely(!mm)) {
+      DEBUG_PANIC("Should not be possible\n");
+   }
+
    if(! PageCollapsed(page)) {
       /* Check slaves */
       int cur_node;
@@ -1116,7 +1120,7 @@ int find_and_revert_replication(struct mm_struct * mm, struct vm_area_struct * v
 
       for_each_online_node(cur_node) {
          /** We check if the entry exists in this node **/
-         node_pte = get_pte_from_va(current->mm->pgd_node[cur_node], address);
+         node_pte = get_pte_from_va(mm->pgd_node[cur_node], address);
          if(unlikely(!node_pte)) {
             DEBUG_PANIC("In the current implementation, that should not be the case (address = 0x%lx) !\n", page_va(address));
          }
