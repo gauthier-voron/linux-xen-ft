@@ -24,7 +24,7 @@ int rep_copy_pgd_pte(struct mm_struct* mm, struct vm_area_struct * vma, pgd_t * 
  * It takes an address unmapes the corresponding page from the mm
 **/
 int find_and_revert_replication(struct mm_struct * mm, struct vm_area_struct * vma, unsigned long address, pte_t * master_pte);
-int revert_replication(struct mm_struct * mm, struct vm_area_struct * vma, unsigned long address, pte_t * master_pte, struct page * uptodate_page);
+int revert_replication(struct mm_struct * mm, struct vm_area_struct * vma, unsigned long address, pte_t * master_pte, struct page * uptodate_page, int count_it);
 int collapse_all_other_copies (struct mm_struct * mm, struct vm_area_struct * vma, unsigned long address, struct page * my_page, int my_node, pte_t * my_pte);
 void clear_flush_all_node_copies (struct mm_struct * mm, struct vm_area_struct * vma, unsigned long address);
 

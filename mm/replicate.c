@@ -1079,7 +1079,7 @@ static inline int clear_single_pte(pgd_t* pgd, struct mm_struct * mm, struct vm_
 }
 
 /** pgd is a valid pgd for the page **/
-int revert_replication(struct mm_struct * mm, struct vm_area_struct * vma, unsigned long address, pte_t * master_pte, struct page * uptodate_page) {
+int revert_replication(struct mm_struct * mm, struct vm_area_struct * vma, unsigned long address, pte_t * master_pte, struct page * uptodate_page, int count_it) {
    pte_t new_pte;
    struct page * master_page;
 
@@ -1102,7 +1102,9 @@ int revert_replication(struct mm_struct * mm, struct vm_area_struct * vma, unsig
    ClearPageCollapsed(master_page);
    ClearPageReplication(master_page);
 
-   INCR_REP_STAT_VALUE(nr_replicated_decisions_reverted, 1);
+   if(count_it) {
+      INCR_REP_STAT_VALUE(nr_replicated_decisions_reverted, 1);
+   }
    return 0;
 }
 
@@ -1144,7 +1146,7 @@ int find_and_revert_replication(struct mm_struct * mm, struct vm_area_struct * v
       DEBUG_PANIC("Should not happen !\n");
    }
 
-   return revert_replication(mm, vma, address, master_pte, page);
+   return revert_replication(mm, vma, address, master_pte, page, 0);
 }
 
 void clear_flush_all_node_copies (struct mm_struct * mm, struct vm_area_struct * vma, unsigned long address) {

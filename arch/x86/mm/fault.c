@@ -1563,7 +1563,7 @@ good_area:
 
 #if ENABLE_PINGPONG_FIX
          if(PagePingPong(my_page)) {
-            revert_replication(mm, vma, address, master_pte, my_page);
+            revert_replication(mm, vma, address, master_pte, my_page, 1);
             INCR_REP_STAT_VALUE(nr_collapses, 1);
          }
          else if (write) {
@@ -1587,7 +1587,7 @@ good_area:
 
                /* This page will not be replicated anymore */
                SetPagePingPong(my_page);
-               revert_replication(mm, vma, address, master_pte, my_page);
+               revert_replication(mm, vma, address, master_pte, my_page, 1);
             }
             else {
                collapse_all_other_copies (mm, vma, address, my_page, node, my_pte);
@@ -1609,7 +1609,7 @@ good_area:
                /* This page will not be replicated anymore */
                SetPagePingPong(my_page);
 
-               revert_replication(mm, vma, address, master_pte, my_page);
+               revert_replication(mm, vma, address, master_pte, my_page, 1);
                INCR_REP_STAT_VALUE(nr_collapses, 1);
             }
             else {
@@ -1621,7 +1621,7 @@ good_area:
          if(write) {
             // We can probably optimize that and do that earlier, which will save some tlb flush operations
             // but that's definitely easier here
-            revert_replication(mm, vma, address, master_pte, my_page);
+            revert_replication(mm, vma, address, master_pte, my_page, 1);
             INCR_REP_STAT_VALUE(nr_collapses, 1);
          }
 #else
