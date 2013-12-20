@@ -726,12 +726,15 @@ unsigned migration_allowed_2M(void) {
    if(disable_2M_migrations_globally)
       return 0;
 
+   if(!carrefour_options.throttle_2M_migrations_limit)
+      return 1;
+
    read_lock(&carrefour_hook_stats_lock);
    stats = get_cpu_ptr(&carrefour_migration_stats);
 
    t = iteration_length_cycles ? (stats->time_spent_in_migration_2M * 100UL) / (iteration_length_cycles) : 0;
    
-   allowed = carrefour_options.throttle_2M_migrations_limit ? t < carrefour_options.throttle_2M_migrations_limit : 1; 
+   allowed = t < carrefour_options.throttle_2M_migrations_limit;
    if(!allowed) {
       __DEBUG("Thresold %u %% reached. Disabling 2M migrations\n", carrefour_options.throttle_2M_migrations_limit);
       disable_2M_migrations_globally = 1;
@@ -756,12 +759,15 @@ unsigned migration_allowed_4k(void) {
    if(disable_4k_migrations_globally)
       return 0;
 
+   if(!carrefour_options.throttle_4k_migrations_limit)
+      return 1;
+
    read_lock(&carrefour_hook_stats_lock);
    stats = get_cpu_ptr(&carrefour_migration_stats);
 
    t = iteration_length_cycles ? (stats->time_spent_in_migration_4k * 100UL) / (iteration_length_cycles) : 0;
 
-   allowed = carrefour_options.throttle_4k_migrations_limit ? t < carrefour_options.throttle_4k_migrations_limit : 1;
+   allowed = t < carrefour_options.throttle_4k_migrations_limit;
    if(!allowed) {
       __DEBUG("Thresold %u %% reached. Disabling 4k migrations\n", carrefour_options.throttle_4k_migrations_limit);
       disable_4k_migrations_globally = 1;
