@@ -10,6 +10,8 @@
 #include <asm/tlb.h>
 #include <asm-generic/pgtable.h>
 
+#include <linux/replicate.h>
+
 #ifndef __HAVE_ARCH_PTEP_SET_ACCESS_FLAGS
 /*
  * Only sets the access flags (dirty, accessed), as well as write 
@@ -87,9 +89,16 @@ pte_t ptep_clear_flush(struct vm_area_struct *vma, unsigned long address,
 		       pte_t *ptep)
 {
 	pte_t pte;
+   
+   /** FG: We need to clear the "slave" entry as well **/
+   /** TODO: too many flushes **/
+   clear_flush_all_node_copies((vma)->vm_mm, vma, address);
+   /***/
+
 	pte = ptep_get_and_clear((vma)->vm_mm, address, ptep);
 	if (pte_accessible(pte))
 		flush_tlb_page(vma, address);
+ 
 	return pte;
 }
 #endif

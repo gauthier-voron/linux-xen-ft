@@ -895,18 +895,7 @@ copy_one_pte(struct mm_struct *dst_mm, struct mm_struct *src_mm,
 		goto out_set_pte;
 	}
    else if(is_replicated(src_mm)) {
-      struct page * src_page;
-      src_page = pte_page(*src_pte);
-
-      if(src_page && PageReplication(src_page)) {
-         // Revert replication before changing the protection
-         __DEBUG("Reverting replication for address 0x%lx because we are forking pid %d\n", addr, current->pid);
-         find_and_revert_replication(src_mm, vma, addr, src_pte);
-      }
-      else {
-         // Maybe that's a bit overkill
-         clear_flush_all_node_copies(src_mm, vma, addr);
-      }
+      clear_flush_all_node_copies(src_mm, vma, addr);
    }
 
 	/*
@@ -1173,15 +1162,16 @@ again:
 				     page->index > details->last_index))
 					continue;
 			}
-			ptent = ptep_get_and_clear_full(mm, addr, pte,
-							tlb->fullmm);
-			tlb_remove_tlb_entry(tlb, pte, addr);
 
          /** FG: We need to clear the "slave" entry as well **/
          clear_flush_all_node_copies(mm, vma, addr);
          /***/
 
-			if (unlikely(!page))
+			ptent = ptep_get_and_clear_full(mm, addr, pte,
+							tlb->fullmm);
+			tlb_remove_tlb_entry(tlb, pte, addr);
+
+         if (unlikely(!page))
 				continue;
 
          /** Statistics **/
@@ -2891,11 +2881,7 @@ gotten:
 		 */
 		ptep_clear_flush(vma, address, page_table);
 
-      /** FG: We need to clear the "slave" entry as well **/
-      clear_flush_all_node_copies(mm, vma, address);
-      /***/
-
-		page_add_new_anon_rmap(new_page, vma, address);
+      page_add_new_anon_rmap(new_page, vma, address);
 		/*
 		 * We call the notify macro here because, when using secondary
 		 * mmu page tables (such as kvm shadow page tables), we want the
@@ -3340,10 +3326,7 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 setpte:
 	set_pte_at(mm, address, page_table, entry);
 
-   /* We must clear and flush all nodes because the mapping has changed on the master */
-   clear_flush_all_node_copies(mm, vma, address);
-
-	/* No need to invalidate - it was non-present before */
+   /* No need to invalidate - it was non-present before */
 	update_mmu_cache(vma, address, page_table);
 unlock:
 	pte_unmap_unlock(page_table, ptl);

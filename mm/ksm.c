@@ -904,11 +904,7 @@ static int write_protect_page(struct vm_area_struct *vma, struct page *page,
 		 */
 		entry = ptep_clear_flush(vma, addr, ptep);
 
-      /** FG: We need to clear the "slave" entry as well **/
-      clear_flush_all_node_copies(mm, vma, addr);
-      /***/
-
-		/*
+      /*
 		 * Check that no O_DIRECT or similar I/O is in progress on the
 		 * page
 		 */
@@ -978,12 +974,7 @@ static int replace_page(struct vm_area_struct *vma, struct page *page,
 	flush_cache_page(vma, addr, pte_pfn(*ptep));
 	ptep_clear_flush(vma, addr, ptep);
 
-   /** FG: We need to clear the "slave" entry as well **/
-   clear_flush_all_node_copies(mm, vma, addr);
-   /***/
-
-
-	set_pte_at_notify(mm, addr, ptep, mk_pte(kpage, vma->vm_page_prot));
+   set_pte_at_notify(mm, addr, ptep, mk_pte(kpage, vma->vm_page_prot));
 
 	page_remove_rmap(page);
 	if (!page_mapped(page))

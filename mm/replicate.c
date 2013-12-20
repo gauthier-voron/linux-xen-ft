@@ -193,7 +193,7 @@ int replicate_madvise(pid_t tgid, unsigned long start, unsigned long len, int ad
    spin_lock(&work_list_lock);
    list_add(&new_work->list, &work_list);
 
-   //DEBUG_REPTHREAD("Pushed a new work item in the queue. Tgid = %d, start = 0x%lx, len = 0x%lx\n", tgid, new_work->start, new_work->len);
+   DEBUG_REPTHREAD("Pushed a new work item in the queue. Tgid = %d, start = 0x%lx, len = 0x%lx\n", tgid, new_work->start, new_work->len);
 
    wake_up_process(work_task);
    spin_unlock(&work_list_lock);
@@ -438,10 +438,19 @@ static inline int do_page_replication(struct mm_struct * mm, struct vm_area_stru
    ClearPagePingPong(page);
    memset(&page->stats, 0, sizeof(perpage_stats_t));
 
-
    /* read/write protect pages in master */
    new_pte = mk_pte(page, PAGE_NONE);
    set_pte_at_notify(mm, address, pte_master, new_pte);
+
+   /* Make sure to clear/flush every node */
+   for_each_online_node(node) {
+      pte_slave = get_pte_from_va(mm->pgd_node[node], address);
+      
+      if(pte_slave) {
+         ptep_get_and_clear(mm, address, pte_slave);
+      }
+   }
+
    flush_tlb_page(vma, address);
 
    /* Allocate a page for each domain, data will be copied lazily */
@@ -452,11 +461,7 @@ static inline int do_page_replication(struct mm_struct * mm, struct vm_area_stru
       pud = pud_offset(pgd, address);
       pmd = pmd_offset(pud, address);
       pte_slave = pte_offset_map(pmd, address);
-
-      /* Clear and flush entry if needed */
-      if(pte_present(*pte_slave)) {
-         ptep_clear_flush(vma, address, pte_slave);
-      }
+      // TODO- Are we sure that pte_offset_map won't fail ?
 
       /* Here we have the page. Updating its attributes */
       SetPageReplication(new_page);
@@ -470,7 +475,7 @@ static inline int do_page_replication(struct mm_struct * mm, struct vm_area_stru
       /* Set up the new page */
       page_add_new_anon_rmap(new_page, vma, address);
 
-      //DEBUG_REPTHREAD("Allocated a new page (0X%lx) for address 0x%lx on node %d\n", (unsigned long) page_address(new_page), page_va(address), node);
+      DEBUG_REPTHREAD("Allocated a new page (0X%lx) for address 0x%lx on node %d\n", (unsigned long) page_address(new_page), page_va(address), node);
 
       /* Install the new mapping */
       set_pte_at_notify(mm, address, pte_slave, new_pte);
@@ -562,14 +567,31 @@ static int rep_update_pages(struct mm_struct * mm, unsigned long start, unsigned
 }
 
 /** Todo: the TLB is probably flushed to many times **/
-void clear_flush_all_node_copies (struct mm_struct * mm, struct vm_area_struct * vma, unsigned long address) {
+static inline pte_t* __get_pte_from_va (pgd_t* pgd, unsigned long address) {
+   pte_t * pte = NULL;
+
+   pgd = rep_pgd_offset(pgd, address);
+   if (pgd_present(*pgd )) {
+      pud_t *pud = pud_offset(pgd, address);
+      if(pud_present(*pud)) {
+         pmd_t *pmd = pmd_offset(pud, address);
+         if (pmd_present(*pmd )) {
+            pte = pte_offset_map(pmd, address);
+         }
+      }
+   }
+
+   return pte;
+}
+
+void __clear_flush_all_node_copies (struct mm_struct * mm, struct vm_area_struct * vma, unsigned long address) {
    int flush_needed = 0;
 
    if(is_replicated(mm)) {
       int cur_node;
       DEBUG_REP_VV("Clearing and flushing all nodes for address 0x%lx (caller = %p)\n", address, __builtin_return_address(0));
       for_each_online_node(cur_node) {
-         pte_t * pte = get_pte_from_va(mm->pgd_node[cur_node], address);
+         pte_t * pte = __get_pte_from_va(mm->pgd_node[cur_node], address);
          if(pte) {
             struct page *page = pte_page(*pte);
 
@@ -623,6 +645,10 @@ static int rep_work_thread(void *nothing)
 
    while(1)
    {
+#if WITH_DEBUG_LOCKS
+      debug_check_no_locks_held(current);
+#endif
+
       spin_lock(&work_list_lock);
       if(list_empty(&work_list)) {
          set_current_state(TASK_INTERRUPTIBLE);
@@ -651,7 +677,7 @@ static int rep_work_thread(void *nothing)
 
          mm = __get_mm_from_tgid(work->tgid);
          if(!mm) {
-            DEBUG_REPTHREAD("Cannot find mm for tgid %d\n", tgid);
+            DEBUG_REPTHREAD("Cannot find mm for tgid %d\n", work->tgid);
             continue;
          }
 
@@ -663,7 +689,7 @@ static int rep_work_thread(void *nothing)
             int has_created_pgds;
             int has_replicated_page;
 
-            DEBUG_REPTHREAD("New message received (start = %lu work->start, end = %lu)\n", work->start, end);
+            DEBUG_REPTHREAD("New message received (tgid = %d, start = %lu work->start, end = %lu)\n", work->tgid, work->start, end);
 
             down_read(&mm->mmap_sem);
 
@@ -682,7 +708,7 @@ static int rep_work_thread(void *nothing)
             has_replicated_page = rep_update_pages(mm, work->start, end, MADV_REPLICATE);
 #endif
 
-            DEBUG_REPTHREAD("Message processed properly (start = %lu work->start, end = %lu)\n", work->start, end);
+            DEBUG_REPTHREAD("Message processed properly\n");
 
 #if 0 && WITH_SANITY_CHECKS
             if(has_created_pgds || has_replicated_page) {
@@ -704,10 +730,17 @@ static int rep_work_thread(void *nothing)
 
          list_del(pos);
          free_work_list_item(work);
+
+#if WITH_DEBUG_LOCKS
+         debug_check_no_locks_held(current);
+#endif
       }
    }
 
 exit:
+#if WITH_DEBUG_LOCKS
+   debug_check_no_locks_held(current);
+#endif
    return 0;
 }
 
@@ -1058,6 +1091,9 @@ int revert_replication(struct mm_struct * mm, struct vm_area_struct * vma, unsig
       copy_user_highpage(master_page, uptodate_page, address, vma);
    }
 
+   /** Clear the copies on each node -- pte will be filled lazily **/
+   __clear_flush_all_node_copies(mm, vma, address);
+
    /** Unprotect the page on the master **/
    new_pte = mk_pte(master_page, vma->vm_page_prot);
    set_pte_at(mm, address, master_pte, new_pte);
@@ -1065,9 +1101,6 @@ int revert_replication(struct mm_struct * mm, struct vm_area_struct * vma, unsig
    /** Page is not replicated anymore **/
    ClearPageCollapsed(master_page);
    ClearPageReplication(master_page);
-
-   /** Clear the copies on each node -- pte will be filled lazily **/
-   clear_flush_all_node_copies(mm, vma, address);
 
    INCR_REP_STAT_VALUE(nr_replicated_decisions_reverted, 1);
    return 0;
@@ -1109,6 +1142,29 @@ int find_and_revert_replication(struct mm_struct * mm, struct vm_area_struct * v
 
    return revert_replication(mm, vma, address, master_pte, page);
 }
+
+void clear_flush_all_node_copies (struct mm_struct * mm, struct vm_area_struct * vma, unsigned long address) {
+   address &= PAGE_MASK;
+
+   if(is_replicated(mm)) {
+      pte_t * pte = get_pte_from_va(mm->pgd_master, address);
+      
+      if(pte) {
+         struct page *page = pte_page(*pte);
+
+         if(page && PageReplication(page)) {
+            DEBUG_REP_VV("This is a replicated page. Calling find_and_revert_replication (address = 0x%lx, caller = %p)\n", address, __builtin_return_address(0));
+            find_and_revert_replication(mm, vma, address, pte);
+
+            return;
+         }
+      }
+
+      DEBUG_REP_VV("This is not a replicated page. Calling __clear_flush_all_node_copies (adress = 0x%lx, caller = %p)\n", address, __builtin_return_address(0));
+      __clear_flush_all_node_copies(mm, vma, address);
+   }
+}
+
 
 int collapse_all_other_copies (struct mm_struct * mm, struct vm_area_struct * vma, unsigned long address, struct page * my_page, int my_node, pte_t * my_pte) {
    int node = 0;
@@ -1301,6 +1357,7 @@ int check_pgd_consistency(struct mm_struct *mm) {
    int node;
    pte_t *pte_master;
    spinlock_t *ptl_master = NULL;
+   unsigned long addr;
 
    if(!is_replicated(mm)) {
       DEBUG_WARNING("Don't need to check the consistency if the pgd has not been replicated!\n");
@@ -1308,7 +1365,6 @@ int check_pgd_consistency(struct mm_struct *mm) {
    }
 
    for(vma = mm->mmap; vma; vma = vma->vm_next) {
-      unsigned long addr;
       for(addr = vma->vm_start; addr < vma->vm_end; addr += PAGE_SIZE) {
          struct page *master_page = NULL;
 
@@ -1416,6 +1472,7 @@ int check_pgd_consistency(struct mm_struct *mm) {
 fail:
    pte_unmap_unlock(pte_master, ptl_master);
 fail_nolock:
+   DEBUG_WARNING("Check failed on adress %lx\n", addr);
    dump_pgd_content(mm);
    return 1;
 }

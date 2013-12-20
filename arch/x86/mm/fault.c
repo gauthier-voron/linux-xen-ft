@@ -1128,14 +1128,15 @@ DEFINE_PER_CPU(unsigned long, how_many_times);
 static inline int check_addr_spin(unsigned long address, int write, struct vm_area_struct * vma) {
    unsigned long *laddr, *hmt;
    unsigned int bug = 0;
+   int ret = 0;
 
    laddr = get_cpu_ptr(&last_addr);
    hmt = get_cpu_ptr(&how_many_times);
 
    if(*laddr == address) {
-      (*hmt)++;
+      int new_value = __sync_add_and_fetch(hmt, 1);
 
-      if(*hmt == 100) {
+      if(new_value == 100) {
          bug = 1;
       }
    }
@@ -1148,15 +1149,16 @@ static inline int check_addr_spin(unsigned long address, int write, struct vm_ar
 
    if(unlikely(bug)){
       down_read(&current->mm->mmap_sem);
-      DEBUG_WARNING("Probable indefinite loop detected !\n");
+      DEBUG_WARNING("Possible indefinite loop detected. Checking if everything seems consistent...\n");
 
-      print_pg_fault (address, write, vma);
-      check_pgd_consistency(current->mm);
+      if(check_pgd_consistency(current->mm)) {
+         print_pg_fault (address, write, vma);
+         ret = 1;
+      }
       up_read(&current->mm->mmap_sem);
 
-      return 1;
    }
-   return 0;
+   return ret;
 }
 #endif
 

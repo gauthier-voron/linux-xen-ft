@@ -50,7 +50,7 @@ extern struct task_struct * work_thread;
 #define is_user_addr(addr) ((unsigned long) addr <= TASK_SIZE)
 
 #define __DEBUG(msg, args...)       printk(KERN_DEBUG "[Core %2d, TID %5d, %25.25s, %20.20s:%4d] " msg, smp_processor_id(), current->pid, __FUNCTION__, __FILE__, __LINE__, ##args)
-#define DEBUG_WARNING(msg, args...) printk(KERN_CRIT "[Core %2d, TID %5d, %25.25s, %20.20s:%4d] (WARNING) " msg, smp_processor_id(), current->pid, __FUNCTION__, __FILE__, __LINE__, ##args)
+#define DEBUG_WARNING(msg, args...) printk(KERN_DEBUG "[Core %2d, TID %5d, %25.25s, %20.20s:%4d] (WARNING) " msg, smp_processor_id(), current->pid, __FUNCTION__, __FILE__, __LINE__, ##args)
 
 #define DEBUG_PANIC(msg, args...) { \
    DEBUG_WARNING(msg, ##args); \
@@ -70,7 +70,7 @@ extern struct task_struct * work_thread;
 #endif
 
 #if VERBOSE_REPTHREAD
-#define DEBUG_REPTHREAD(msg, args...) if(work_thread) { __DEBUG(msg, ##args); }
+#define DEBUG_REPTHREAD(msg, args...) if(work_thread) { __DEBUG("(REPTHREAD) " msg, ##args); }
 #else
 #define DEBUG_REPTHREAD(msg, args...) do {} while(0);
 #endif

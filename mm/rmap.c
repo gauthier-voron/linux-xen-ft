@@ -902,7 +902,6 @@ static int page_mkclean_one(struct page *page, struct vm_area_struct *vma,
       if(PageReplication(page)) {
          DEBUG_PANIC("TODO!\n"); // We cannot use clear_flush_all_node_copies because we don't want to remove the page
       }
-      clear_flush_all_node_copies(mm, vma, address);
 
 		flush_cache_page(vma, address, pte_pfn(*pte));
 		entry = ptep_clear_flush(vma, address, pte);
@@ -1239,9 +1238,6 @@ int try_to_unmap_one(struct page *page, struct vm_area_struct *vma,
 	flush_cache_page(vma, address, page_to_pfn(page));
 	pteval = ptep_clear_flush(vma, address, pte);
 
-   /** FG: We need to clear the "slave" entry as well **/
-   clear_flush_all_node_copies(mm, vma, address);
-
 	/* Move the dirty bit to the physical page now the pte is gone. */
 	if (pte_dirty(pteval))
 		set_page_dirty(page);
@@ -1423,9 +1419,6 @@ static int try_to_unmap_cluster(unsigned long cursor, unsigned int *mapcount,
 		/* Nuke the page table entry. */
 		flush_cache_page(vma, address, pte_pfn(*pte));
 		pteval = ptep_clear_flush(vma, address, pte);
-
-      /** FG: We need to clear the "slave" entry as well **/
-      clear_flush_all_node_copies(mm, vma, address);
 
 		/* If nonlinear, store the file page offset in the pte. */
 		if (page->index != linear_page_index(vma, address))
