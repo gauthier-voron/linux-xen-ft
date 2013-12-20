@@ -686,6 +686,7 @@ out_locked:
 EXPORT_SYMBOL(find_and_migrate_thp);
 
 enum thp_states get_thp_state(void) {
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
    if(test_bit(TRANSPARENT_HUGEPAGE_FLAG, &transparent_hugepage_flags)) {
       return THP_ALWAYS;
    }
@@ -695,10 +696,14 @@ enum thp_states get_thp_state(void) {
    else {
       return THP_DISABLED;
    }
+#else
+   return THP_DISABLED;
+#endif
 }
 EXPORT_SYMBOL(get_thp_state);
 
 void set_thp_state(enum thp_states state) {
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
    if(state == THP_DISABLED) {
       clear_bit(TRANSPARENT_HUGEPAGE_FLAG, &transparent_hugepage_flags);
       clear_bit(TRANSPARENT_HUGEPAGE_REQ_MADV_FLAG, &transparent_hugepage_flags);
@@ -714,6 +719,9 @@ void set_thp_state(enum thp_states state) {
    else {
       DEBUG_WARNING("Unknown state!\n");
    }
+#else
+   DEBUG_WARNING("Cannot change THP state since THP is not enabled in kernel options...\n");
+#endif
 }
 EXPORT_SYMBOL(set_thp_state);
 
