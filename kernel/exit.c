@@ -799,6 +799,12 @@ void do_exit(long code)
 	check_stack_usage();
 	exit_thread();
 
+   /** FGAUD **/
+   if(pinthread_callback) {
+      pinthread_callback(tsk, EXIT);
+   }
+   /****/
+
 	/*
 	 * Flush inherited counters to the parent - before the parent
 	 * gets woken up by child-exit notifications.

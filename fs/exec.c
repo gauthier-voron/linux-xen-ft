@@ -1043,8 +1043,8 @@ void set_task_comm(struct task_struct *tsk, char *buf)
 	perf_event_comm(tsk);
 
    /** FGAUD **/
-   if(clone_callback) {
-      clone_callback(current, 0);
+   if(pinthread_callback) {
+      pinthread_callback(current, TASKCOMM);
    }
    /****/
 }

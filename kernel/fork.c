@@ -97,8 +97,8 @@ __cacheline_aligned DEFINE_RWLOCK(tasklist_lock);  /* outer */
 
 /** FGAUD **/
 // Allow module to set a callback called whenever a new task is created
-clone_callback_t clone_callback = NULL;
-EXPORT_SYMBOL(clone_callback);
+pinthread_callback_t pinthread_callback = NULL;
+EXPORT_SYMBOL(pinthread_callback);
 /****/
 
 #ifdef CONFIG_PROVE_RCU
@@ -1635,8 +1635,8 @@ long do_fork(unsigned long clone_flags,
 		}
 
       /** FGAUD **/
-      if(clone_callback) {
-         clone_callback(p, 1);
+      if(pinthread_callback) {
+         pinthread_callback(p, CLONE);
       }
       /****/
 

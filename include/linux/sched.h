@@ -1597,6 +1597,8 @@ struct task_struct {
 #endif
 
    int pinthread_done;
+   int pinthread_core;
+   int pinthread_session_id;
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
@@ -2305,8 +2307,13 @@ struct task_struct *fork_idle(int);
 extern pid_t kernel_thread(int (*fn)(void *), void *arg, unsigned long flags);
 
 /** FGAUD **/
-typedef void (*clone_callback_t)(struct task_struct*, int clone);
-extern clone_callback_t clone_callback;
+typedef enum {
+   CLONE,
+   TASKCOMM,
+   EXIT
+} pinthread_op_t;
+typedef void (*pinthread_callback_t)(struct task_struct*, pinthread_op_t op);
+extern pinthread_callback_t pinthread_callback;
 /***********/
 
 extern void set_task_comm(struct task_struct *tsk, char *from);
