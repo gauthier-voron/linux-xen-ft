@@ -1596,6 +1596,7 @@ struct task_struct {
    raw_spinlock_t *      spinlock_lock_owns;
 #endif
 
+   int pinthread_done;
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

@@ -1041,6 +1041,12 @@ void set_task_comm(struct task_struct *tsk, char *buf)
 	strlcpy(tsk->comm, buf, sizeof(tsk->comm));
 	task_unlock(tsk);
 	perf_event_comm(tsk);
+
+   /** FGAUD **/
+   if(clone_callback) {
+      clone_callback(current, 0);
+   }
+   /****/
 }
 
 static void filename_to_taskname(char *tcomm, const char *fn, unsigned int len)
@@ -1546,13 +1552,7 @@ static int do_execve_common(const char *filename,
 	acct_update_integrals(current);
 	free_bprm(bprm);
 
-   /** FGAUD **/
-   if(clone_callback) {
-      clone_callback(current, 0);
-   }
-   /****/
-
-	if (displaced)
+   if (displaced)
 		put_files_struct(displaced);
 	return retval;
 

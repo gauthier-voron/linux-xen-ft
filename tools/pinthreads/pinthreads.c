@@ -59,7 +59,7 @@ void new_process_cb(struct task_struct* p, int clone) {
 
    get_task_comm(comm, p);
 
-   //printk("%s has been called for pid: %d (name = %s)\n", clone ? "Clone" : "Execve", p->pid, comm);
+   //printk("%s has been called for pid: %d (name = %s)\n", clone ? "Clone" : "Taskcomm", p->pid, comm);
 
    for(i = 0; i < num_considered_apps; i++) {
       char * app = considered_apps[i];
@@ -68,7 +68,11 @@ void new_process_cb(struct task_struct* p, int clone) {
       }
    }
 
-   if((!num_considered_apps && clone) || i < num_considered_apps) {
+   if(clone) {
+      p->pinthread_done = 0;
+   }
+
+   if(clone || (!p->pinthread_done && i < num_considered_apps)) {
       struct cpumask dstp;
       int cpu = __get_next_cpu();
 
@@ -77,6 +81,8 @@ void new_process_cb(struct task_struct* p, int clone) {
       sched_setaffinity(p->pid, &dstp);
 
       printk("[TOTAL %5d] Assigning pid %d (%s) to core %d\n", ++total_pinned, p->pid,  comm, cpu);
+
+      p->pinthread_done = 1;
    }
 }
 
