@@ -77,6 +77,11 @@ static struct vfsmount *shm_mnt;
 /* Symlink up to this size is kmalloc'ed instead of using a swappable page */
 #define SHORT_SYMLINK_LEN 128
 
+/** FGAUD **/
+#include <linux/debugfs.h>
+struct mempolicy* shmem_global_policy = NULL;
+/*****/
+
 /*
  * shmem_fallocate and shmem_writepage communicate via inode->i_private
  * (with i_mutex making sure that it has only one user at a time):
@@ -938,7 +943,13 @@ static struct page *shmem_alloc_page(gfp_t gfp,
 	/* Bias interleave by inode number to distribute better across nodes */
 	pvma.vm_pgoff = index + info->vfs_inode.i_ino;
 	pvma.vm_ops = NULL;
-	pvma.vm_policy = mpol_shared_policy_lookup(&info->policy, index);
+
+   if(!shmem_global_policy) {
+      pvma.vm_policy = mpol_shared_policy_lookup(&info->policy, index);
+   }
+   else {
+      pvma.vm_policy = shmem_global_policy;
+   }
 
 	page = alloc_page_vma(gfp, &pvma, 0);
 
@@ -3010,3 +3021,58 @@ struct page *shmem_read_mapping_page_gfp(struct address_space *mapping,
 #endif
 }
 EXPORT_SYMBOL_GPL(shmem_read_mapping_page_gfp);
+
+
+/** FGAUD **/
+struct dentry * dfs_dir;
+struct dentry * dfs_file;
+#define BUF_LEN 64
+static ssize_t print_shmem_policy(struct file *fp, char __user *user_buffer, size_t count, loff_t *position) {
+   char buffer[BUF_LEN+1] = "N/A\n";
+
+   if(shmem_global_policy) {
+      int len = mpol_to_str(buffer, BUF_LEN, shmem_global_policy);
+      buffer[len] = '\n';
+   }
+
+   return simple_read_from_buffer(user_buffer, count, position, buffer, BUF_LEN+1);
+}
+
+static ssize_t set_shmem_policy(struct file *fp, const char __user *user_buffer, size_t count, loff_t *position) {
+   char buffer[BUF_LEN];
+
+   if(count > BUF_LEN)
+      return -EINVAL;
+
+   simple_write_to_buffer(buffer, BUF_LEN, position, user_buffer, count);
+
+   return mpol_parse_str(buffer, &shmem_global_policy);
+}
+
+static const struct file_operations fops_debug = {
+   .read = print_shmem_policy,
+   .write = set_shmem_policy,
+};
+
+static int __init shmem_init_debug(void) {
+   dfs_dir = debugfs_create_dir("fgaud", NULL);
+   if (!dfs_dir) {
+      printk("error creating directory");
+      return (-ENODEV);
+   }
+
+   dfs_file = debugfs_create_file("shm_mpol", 0644, dfs_dir, NULL, &fops_debug);
+   if (!dfs_file) {
+      printk("error creating file");
+      return (-ENODEV);
+   }
+
+   return (0);
+}
+module_init(shmem_init_debug);
+
+static void __exit shmem_exit_debug(void)
+{
+   debugfs_remove(dfs_dir);
+}
+module_exit(shmem_exit_debug);
