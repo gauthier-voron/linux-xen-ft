@@ -3044,7 +3044,18 @@ static ssize_t set_shmem_policy(struct file *fp, const char __user *user_buffer,
    if(count > BUF_LEN)
       return -EINVAL;
 
+   memset(buffer, 0, BUF_LEN);
+
    simple_write_to_buffer(buffer, BUF_LEN, position, user_buffer, count);
+
+   if(count == 0 || !strncmp(buffer, "N/A", 3)) {
+      // This works even if shmem_global_policy has never been set
+      // because mpol_put does nothing with a null pointer
+      mpol_put(shmem_global_policy);
+      shmem_global_policy = NULL;
+
+      return 0;
+   }
 
    return mpol_parse_str(buffer, &shmem_global_policy);
 }
