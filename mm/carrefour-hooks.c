@@ -315,6 +315,11 @@ int s_migrate_pages(pid_t pid, unsigned long nr_pages, void ** pages, int * node
 
          if(allowed && migrate_misplaced_page(page, nodes[i])) {
             //__DEBUG("Migrating page 0x%lx\n", addr);
+
+            // FGAUD
+            if(migration_callback) {
+               migration_callback(mm, addr); 
+            }
          }
          else {
             if(!allowed)

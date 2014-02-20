@@ -90,4 +90,8 @@ void set_thp_state(enum thp_states state);
 
 unsigned migration_allowed_2M(void);
 unsigned migration_allowed_4k(void);
+
+typedef void (*migration_callback_t)(struct mm_struct * mm, unsigned long addr);
+extern migration_callback_t migration_callback;
+
 #endif

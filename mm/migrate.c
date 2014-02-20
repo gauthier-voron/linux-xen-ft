@@ -47,7 +47,6 @@
 
 #include <linux/mmu_notifier.h>
 
-
 #include "internal.h"
 
 /*
@@ -1613,6 +1612,9 @@ int numamigrate_isolate_page(pg_data_t *pgdat, struct page *page)
  * node. Caller is expected to have an elevated reference count on
  * the page that will be dropped by this function before returning.
  */
+migration_callback_t migration_callback = NULL;
+EXPORT_SYMBOL(migration_callback);
+
 int migrate_misplaced_page(struct page *page, int node)
 {
 	pg_data_t *pgdat = NODE_DATA(node);
