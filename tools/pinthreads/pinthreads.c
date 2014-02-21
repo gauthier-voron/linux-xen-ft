@@ -33,47 +33,53 @@ module_param_array(considered_apps, charp, &num_considered_apps, S_IRUGO);
 static bool spread = 0;
 module_param(spread, bool, S_IRUGO);
 
-static int * cpu_array;
-static int cpu_array_nr;
+// 0 = pin on cpus, 1 = pin on nodes
+static bool mode = 0;
+module_param(mode, bool, S_IRUGO);
+
+static int * array;
+static int * nr_process;
+static int array_sz;
+
 static int total_pinned = 0;
 
-static int * cpu_nr_process;
 static DEFINE_SPINLOCK(pinthread_lock);
 
 static unsigned session_id;
 
-static inline int __get_next_cpu(int current_cpu) {
-   int min_cpu = -1;
+static inline int __get_next_entry(int current_entry) {
+   int min = -1;
    int i;
 
-   if(current_cpu >= 0 && cpu_nr_process[current_cpu] == 1) {
-      return current_cpu; // No need to move it
+   if(current_entry >= 0 && nr_process[current_entry] == 1) {
+      return current_entry; // No need to move it
    }
 
    // Find the min
-   for(i = 0; i < cpu_array_nr; i++) {
-      int cpu = cpu_array[i];
+   for(i = 0; i < array_sz; i++) {
+      int entry = array[i];
 
-      //printk("%d ", cpu_nr_process[i]); 
-      if((cpu_nr_process[cpu] < cpu_nr_process[min_cpu] || min_cpu == -1) && cpu_online(cpu)) {
-         min_cpu = cpu;
+      //printk("%d ", nr_process[i]); 
+      if((nr_process[entry] < nr_process[min] || min == -1)) {
+         if((!mode && cpu_online(entry)) || (mode && node_online(entry))) {
+            min = entry;
+         }
       }
    }
    //printk("\n");
 
-   if(min_cpu == -1) {
+   if(min == -1) {
       printk(KERN_WARNING "(%s:%d) Wow, that's a bug!\n",  __FUNCTION__, __LINE__);
-      min_cpu = 0;
+      min = 0;
    }
 
-   return min_cpu;
+   return min;
 }
 
 void new_process_cb(struct task_struct* p, pinthread_op_t op) {
    int i;
    char comm[TASK_COMM_LEN];
 
-   struct cpumask dstp;
    const struct cpumask* dstp_p = NULL;
 
    if(!p) {
@@ -86,11 +92,11 @@ void new_process_cb(struct task_struct* p, pinthread_op_t op) {
 
    if(op == EXIT) {
       if(p->pinthread_done && p->pinthread_session_id == session_id) {
-         cpu_nr_process[p->pinthread_core]--;
+         nr_process[p->pinthread_data]--;
          p->pinthread_done = 0;
 
-         printk("[TOTAL %5d] EXIT has been called for pid: %d (name = %s, core = %d)\n", --total_pinned, p->pid, comm, p->pinthread_core);
-         if(unlikely(cpu_nr_process[p->pinthread_core] < 0)) {
+         printk("[TOTAL %5d] EXIT has been called for pid: %d (name = %s, core/node = %d)\n", --total_pinned, p->pid, comm, p->pinthread_data);
+         if(unlikely(nr_process[p->pinthread_data] < 0)) {
             printk(KERN_WARNING "(%s:%d) Wow, that's a bug!\n",  __FUNCTION__, __LINE__);
          }
       }
@@ -114,28 +120,33 @@ void new_process_cb(struct task_struct* p, pinthread_op_t op) {
       }
 
       if((num_considered_apps == 0 && op == CLONE) || (i < num_considered_apps)) {
-         int cpu = __get_next_cpu(p->pinthread_done ? p->pinthread_core : -1);
+         int entry = __get_next_entry(p->pinthread_done ? p->pinthread_data : -1);
 
-         if(!p->pinthread_done || (p->pinthread_done && cpu != p->pinthread_core)) {
-            cpumask_clear(&dstp);
-            cpumask_set_cpu(cpu, &dstp);
-            dstp_p = &dstp;
+         if(!p->pinthread_done || (p->pinthread_done && entry != p->pinthread_data)) {
+            if(mode) {
+               // Node mode
+               dstp_p = cpumask_of_node(entry);
+            }
+            else {
+               // CPU mode
+               dstp_p = get_cpu_mask(entry);
+            }
 
             if(!p->pinthread_done) {
                total_pinned++;
 
-               printk("[TOTAL %5d] Assigning pid %d (%s) to core %d\n", total_pinned, p->pid,  comm, cpu);
+               printk("[TOTAL %5d] Assigning pid %d (%s) to core/node %d\n", total_pinned, p->pid,  comm, entry);
             }
             else {
-               printk("[TOTAL %5d] Moving pid %d (%s) to core %d\n", total_pinned, p->pid,  comm, cpu);
-               cpu_nr_process[p->pinthread_core]--;
+               printk("[TOTAL %5d] Moving pid %d (%s) to core/node %d\n", total_pinned, p->pid,  comm, entry);
+               nr_process[p->pinthread_data]--;
             }
 
             p->pinthread_done = 1;
             p->pinthread_session_id = session_id;
-            p->pinthread_core = cpu;
+            p->pinthread_data = entry;
 
-            cpu_nr_process[cpu]++;
+            nr_process[entry]++;
          }
       }
       else if (op == TASKCOMM && p->pinthread_done) {
@@ -145,7 +156,7 @@ void new_process_cb(struct task_struct* p, pinthread_op_t op) {
             dstp_p = cpu_possible_mask;
             p->pinthread_done = 0;
 
-            cpu_nr_process[p->pinthread_core]--;
+            nr_process[p->pinthread_data]--;
             total_pinned--;
          }
       }
@@ -177,53 +188,67 @@ static int __init pinthreads_init_module(void) {
    session_id = random32();
    printk("Session id: %u\n", session_id);
 
-   cpu_array_nr = num_present_cpus();
-   cpu_array = kmalloc(cpu_array_nr * sizeof(int), GFP_KERNEL);
-   cpu_nr_process = kmalloc(cpu_array_nr * sizeof(int), GFP_KERNEL | __GFP_ZERO);
+   printk("Mode: %d (%s)\n", mode, mode ? "Node": "Core");
+   if(mode) {
+      array_sz = num_possible_nodes();
+   }
+   else {
+      array_sz = num_present_cpus();
+   }
 
-   if(!cpu_array || !cpu_nr_process) {
+   array = kmalloc(array_sz * sizeof(int), GFP_KERNEL);
+   nr_process = kmalloc(array_sz * sizeof(int), GFP_KERNEL | __GFP_ZERO);
+
+   if(!array || !nr_process) {
       printk(KERN_CRIT "Cannot allocate memory!\n");
       return -1;
    }
 
-   if(!spread) {
-      i = 0;
+   if(mode) {
       for_each_node(node) {
-         for_each_cpu(cpu, cpumask_of_node(node)) {
-            if(i == cpu_array_nr) {
-               printk(KERN_CRIT "Trying to add more cpu than present!\n");
-               return -1;
-            }
-
-            cpu_array[i] = cpu;
-            i++;
-         }
+         array[node] = node;
       }
    }
    else {
-      int next_node = 0;
-
-      for(i = 0; i < cpu_array_nr; i++) {
-         int idx = (i / num_possible_nodes()) + 1;
-         int found = 0;
-
-         for_each_present_cpu(cpu) {
-            if(cpu_to_node(cpu) == next_node) {
-               found++;
-
-               if(found == idx){
-                  cpu_array[i] = cpu;
-                  break;
+      if(!spread) {
+         i = 0;
+         for_each_node(node) {
+            for_each_cpu(cpu, cpumask_of_node(node)) {
+               if(i == array_sz) {
+                  printk(KERN_CRIT "Trying to add more cpu than present!\n");
+                  return -1;
                }
+
+               array[i] = cpu;
+               i++;
             }
          }
-         
-         if(i == cpu_array_nr) {
-            printk(KERN_CRIT "Strange bug!\n");
-            return -1;
-         }
+      }
+      else {
+         int next_node = 0;
 
-         next_node = (next_node + 1) % num_possible_nodes();
+         for(i = 0; i < array_sz; i++) {
+            int idx = (i / num_possible_nodes()) + 1;
+            int found = 0;
+
+            for_each_present_cpu(cpu) {
+               if(cpu_to_node(cpu) == next_node) {
+                  found++;
+
+                  if(found == idx){
+                     array[i] = cpu;
+                     break;
+                  }
+               }
+            }
+
+            if(i == array_sz) {
+               printk(KERN_CRIT "Strange bug!\n");
+               return -1;
+            }
+
+            next_node = (next_node + 1) % num_possible_nodes();
+         }
       }
    }
    

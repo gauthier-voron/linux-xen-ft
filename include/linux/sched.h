@@ -1597,7 +1597,7 @@ struct task_struct {
 #endif
 
    int pinthread_done;
-   int pinthread_core;
+   int pinthread_data;
    int pinthread_session_id;
 };
 
