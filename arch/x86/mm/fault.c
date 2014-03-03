@@ -1179,6 +1179,8 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE |
 					(write ? FAULT_FLAG_WRITE : 0);
 
+   unsigned long crit_sec_start;
+
    RECORD_DURATION_START;
 
 	tsk = current;
@@ -1323,6 +1325,8 @@ retry:
 		might_sleep();
 	}
 
+   RECORD_DURATION_START_VAL(crit_sec_start);
+
 	vma = find_vma(mm, address);
 	if (unlikely(!vma)) {
       if(is_replicated(mm)){
@@ -1368,6 +1372,8 @@ retry:
 good_area:
 	if (unlikely(access_error(error_code, vma))) {
 		bad_area_access_error(regs, error_code, address);
+
+      RECORD_DURATION_END_VAL(crit_sec_start, time_spent_in_pgfault_crit_sec);
       RECORD_DURATION_END(time_spent_in_pgfault_handler, nr_pgfault);
 		return;
 	}
@@ -1391,6 +1397,9 @@ good_area:
          up_read(&mm->mmap_sem);
          load_cr3(mm->pgd_node[node]);
          DEBUG_PGFAULT("pgd was changed, retrying fault\n");
+
+         RECORD_DURATION_END_VAL(crit_sec_start, time_spent_in_pgfault_crit_sec);
+         RECORD_DURATION_END(time_spent_in_pgfault_handler, nr_pgfault);
          return;
       }
    }
@@ -1445,6 +1454,7 @@ good_area:
             up_read(&mm->mmap_sem);
 
             DEBUG_PGFAULT("Pagefault was serviced by another thread\n");
+            RECORD_DURATION_END_VAL(crit_sec_start, time_spent_in_pgfault_crit_sec);
             RECORD_DURATION_END(time_spent_in_pgfault_handler, nr_pgfault);
             return;
          }
@@ -1643,6 +1653,7 @@ good_area:
          }
 
          DEBUG_PGFAULT("Page fault on replicated page properly processed (pa = 0x%lx)\n", get_pa_from_va(current_pgd, vma, address));
+         RECORD_DURATION_END_VAL(crit_sec_start, time_spent_in_pgfault_crit_sec);
          RECORD_DURATION_END(time_spent_in_pgfault_handler, nr_pgfault);
          return;
       }
@@ -1693,6 +1704,7 @@ good_area:
                }
 #endif
 
+               RECORD_DURATION_END_VAL(crit_sec_start, time_spent_in_pgfault_crit_sec);
                RECORD_DURATION_END(time_spent_in_pgfault_handler, nr_pgfault);
                return;
             }
@@ -1739,6 +1751,8 @@ good_area:
 #endif
 
          DEBUG_PGFAULT("%s page fault properly processed (pa = 0x%lx)\n", write ? "Write" : "Read", get_pa_from_va(current_pgd, vma, address));
+
+         RECORD_DURATION_END_VAL(crit_sec_start, time_spent_in_pgfault_crit_sec);
          RECORD_DURATION_END(time_spent_in_pgfault_handler, nr_pgfault);
          return;
       }
@@ -1753,6 +1767,7 @@ good_area:
 
 	if (unlikely(fault & (VM_FAULT_RETRY|VM_FAULT_ERROR))) {
 		if (mm_fault_error(regs, error_code, address, fault)) {
+         RECORD_DURATION_END_VAL(crit_sec_start, time_spent_in_pgfault_crit_sec);
          RECORD_DURATION_END(time_spent_in_pgfault_handler, nr_pgfault);
 			return;
       }
@@ -1786,6 +1801,7 @@ good_area:
 
 	up_read(&mm->mmap_sem);
 
+   RECORD_DURATION_END_VAL(crit_sec_start, time_spent_in_pgfault_crit_sec);
    RECORD_DURATION_END(time_spent_in_pgfault_handler, nr_pgfault);
 }
 

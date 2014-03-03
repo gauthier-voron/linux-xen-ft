@@ -872,11 +872,12 @@ static int display_replication_stats(struct seq_file *m, void* v)
 {
    replication_stats_t* global_stats;
    int cpu, i, j;
-   unsigned long time_rd_lock  = 0;
-   unsigned long time_wr_lock  = 0;
-   unsigned long time_lock     = 0;
-   unsigned long time_pgfault  = 0;
-   unsigned long nr_migrations = 0;
+   unsigned long time_rd_lock      = 0;
+   unsigned long time_wr_lock      = 0;
+   unsigned long time_lock         = 0;
+   unsigned long time_pgfault      = 0;
+   unsigned long time_pgfault_crit = 0;
+   unsigned long nr_migrations     = 0;
 
    unsigned long max_time_pgflt = 0;
 
@@ -927,6 +928,7 @@ static int display_replication_stats(struct seq_file *m, void* v)
    }
    if(global_stats->nr_pgfault) {
       time_pgfault = (unsigned long) (global_stats->time_spent_in_pgfault_handler / global_stats->nr_pgfault);
+      time_pgfault_crit = (unsigned long) (global_stats->time_spent_in_pgfault_crit_sec / global_stats->nr_pgfault);
    }
 
    seq_printf(m, "[GLOBAL] Number of MM switch: %lu\n", (unsigned long) global_stats->nr_mm_switch);
@@ -948,6 +950,7 @@ static int display_replication_stats(struct seq_file *m, void* v)
 
    seq_printf(m, "[GLOBAL] Number of page faults: %lu\n", (unsigned long) global_stats->nr_pgfault);
    seq_printf(m, "[GLOBAL] Time spent in the page fault handler: %lu cycles\n\n", time_pgfault);
+   seq_printf(m, "[GLOBAL] Time spent in the page fault handler (not including mm lock): %lu cycles\n\n", time_pgfault_crit);
    seq_printf(m, "[GLOBAL] Max time spent in the page fault handler: %lu cycles (total on one core)\n\n", max_time_pgflt);
 
    seq_printf(m, "[GLOBAL] 4k pages:\n");

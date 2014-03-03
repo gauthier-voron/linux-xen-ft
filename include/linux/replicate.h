@@ -178,6 +178,7 @@ typedef struct __attribute__((packed)) {
 
    uint64_t nr_pgfault;
    uint64_t time_spent_in_pgfault_handler;
+   uint64_t time_spent_in_pgfault_crit_sec;
 
    uint64_t nr_pingpong;
    uint64_t nr_replicated_decisions_reverted;
@@ -215,6 +216,8 @@ DECLARE_PER_CPU(replication_stats_t, replication_stats_per_core);
    unsigned long rdt_start, rdt_stop; \
    rdtscll(rdt_start)
 
+#define RECORD_DURATION_START_VAL(rdt_start) rdtscll(rdt_start)
+
 #define RECORD_DURATION_END(time_counter, acc_counter) \
    rdtscll(rdt_stop); \
    { \
@@ -223,6 +226,21 @@ DECLARE_PER_CPU(replication_stats_t, replication_stats_per_core);
       stats = get_cpu_ptr(&replication_stats_per_core); \
       spin_lock(&stats->lock); \
       stats->acc_counter++; \
+      stats->time_counter+= (rdt_stop - rdt_start); \
+      spin_unlock(&stats->lock); \
+      put_cpu_ptr(&replication_stats_per_core); \
+      read_unlock(&reset_stats_rwl); \
+   }
+
+#define RECORD_DURATION_END_VAL(rdt_start, time_counter) \
+   { \
+      unsigned long rdt_stop; \
+      replication_stats_t* stats; \
+      \
+      rdtscll(rdt_stop); \
+      read_lock(&reset_stats_rwl); \
+      stats = get_cpu_ptr(&replication_stats_per_core); \
+      spin_lock(&stats->lock); \
       stats->time_counter+= (rdt_stop - rdt_start); \
       spin_unlock(&stats->lock); \
       put_cpu_ptr(&replication_stats_per_core); \
