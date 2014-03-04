@@ -429,6 +429,9 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	}
 out:
 	up_write(&current->mm->mmap_sem);
-   INCR_REP_STAT_VALUE(time_spent_mprotect, duration);
+
+   INCR_REP_STAT_VALUE(time_spent_mprotect_lock, duration);
+   INCR_REP_STAT_VALUE(nr_mprotect, 1);
+
 	return error;
 }

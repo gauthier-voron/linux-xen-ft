@@ -313,14 +313,16 @@ set_brk:
 	if (populate)
 		mm_populate(oldbrk, newbrk - oldbrk);
 
-   INCR_REP_STAT_VALUE(time_spent_brk, duration);
+   INCR_REP_STAT_VALUE(time_spent_brk_lock, duration);
+   INCR_REP_STAT_VALUE(nr_brk, 1);
 	return brk;
 
 out:
 	retval = mm->brk;
 	up_write(&mm->mmap_sem);
    
-   INCR_REP_STAT_VALUE(time_spent_brk, duration);
+   INCR_REP_STAT_VALUE(time_spent_brk_lock, duration);
+   INCR_REP_STAT_VALUE(nr_brk, 1);
 	return retval;
 }
 
@@ -2522,12 +2524,35 @@ int vm_munmap(unsigned long start, size_t len)
 {
 	int ret;
 	struct mm_struct *mm = current->mm;
+   // FGAUD
+   unsigned long rdt_start, rdt_stop;
+   replication_stats_t* stats;
+   unsigned long duration;
+   //
 
-	unsigned long duration = down_write(&mm->mmap_sem);
+	duration = down_write(&mm->mmap_sem);
+
+   rdtscll(rdt_start);
+
 	ret = do_munmap(mm, start, len);
 	up_write(&mm->mmap_sem);
 
-   INCR_REP_STAT_VALUE(time_spent_munmap, duration);
+   rdtscll(rdt_stop);
+
+   // FGAUD
+   rdtscll(rdt_stop);
+   read_lock(&reset_stats_rwl);
+   stats = get_cpu_ptr(&replication_stats_per_core);
+   spin_lock(&stats->lock);
+
+   stats->time_spent_munmap_lock += duration;
+   stats->time_spent_munmap_crit_sec += (rdt_stop - rdt_start);
+
+   stats->nr_munmap++;
+   spin_unlock(&stats->lock);
+   put_cpu_ptr(&replication_stats_per_core);
+   read_unlock(&reset_stats_rwl);
+   //
 
 	return ret;
 }
@@ -2657,7 +2682,8 @@ unsigned long vm_brk(unsigned long addr, unsigned long len)
 	if (populate)
 		mm_populate(addr, len);
 
-   INCR_REP_STAT_VALUE(time_spent_brk, duration);
+   INCR_REP_STAT_VALUE(time_spent_brk_lock, duration);
+   INCR_REP_STAT_VALUE(nr_brk, 1);
 	return ret;
 }
 EXPORT_SYMBOL(vm_brk);

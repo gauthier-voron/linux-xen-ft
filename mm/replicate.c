@@ -781,10 +781,10 @@ static void _get_merged_lock_time(struct time_profiling_t* merged) {
       merged->timelock += (stats->time_spent_acquiring_readlocks + stats->time_spent_acquiring_writelocks);
       merged->timewlock += (stats->time_spent_acquiring_writelocks);
       merged->timespinlock += (stats->time_spent_spinlocks);
-      merged->timemmap += (stats->time_spent_mmap);
-      merged->timebrk += (stats->time_spent_brk);
-      merged->timemunmap += (stats->time_spent_munmap);
-      merged->timemprotect += (stats->time_spent_mprotect);
+      merged->timemmap += (stats->time_spent_mmap_lock);
+      merged->timebrk += (stats->time_spent_brk_lock);
+      merged->timemunmap += (stats->time_spent_munmap_lock);
+      merged->timemprotect += (stats->time_spent_mprotect_lock);
       
       if(merged->timepgflt < stats->time_spent_in_pgfault_handler) {
          merged->timepgflt = (stats->time_spent_in_pgfault_handler);
@@ -879,7 +879,11 @@ static int display_replication_stats(struct seq_file *m, void* v)
    unsigned long time_pgfault_crit = 0;
    unsigned long nr_migrations     = 0;
 
+   unsigned long avg1 = 0, avg2 = 0;
+
    unsigned long max_time_pgflt = 0;
+   unsigned long max_time_mmap = 0;
+   unsigned long max_time_munmap = 0;
 
    seq_printf(m, "#Number of online cpus: %d\n", num_online_cpus());
    seq_printf(m, "#Number of online nodes: %d\n", num_online_nodes());
@@ -895,23 +899,48 @@ static int display_replication_stats(struct seq_file *m, void* v)
 
    for_each_online_cpu(cpu) {
       replication_stats_t * stats = per_cpu_ptr(&replication_stats_per_core, cpu);
+      unsigned long time_mmap_sum = 0;
+      unsigned long time_munmap_sum = 0;
+
+      uint64_t* stats_p = (uint64_t*) stats;
 
       // Automatic merging of everything
       for(i = 0; i < sizeof(replication_stats_t) / sizeof(uint64_t); i++) {
-         if(((uint64_t*) stats) + i == &stats->max_nr_migrations_per_4k_page) {
+         if(&stats_p[i] == &stats->max_nr_migrations_per_4k_page) {
             // We don't want to automerge this one
             continue;
          }
 
-         if((((uint64_t*) stats) + i == &stats->time_spent_in_pgfault_handler) && (((uint64_t*) stats)[i] > max_time_pgflt)) {
-            max_time_pgflt = ((uint64_t*) stats)[i];
+         if((&stats_p[i] == &stats->time_spent_in_pgfault_handler) && (stats_p[i] > max_time_pgflt)) {
+            max_time_pgflt = stats_p[i];
+         }
+         else if(&stats_p[i] == &stats->time_spent_mmap_lock) {
+            time_mmap_sum += stats_p[i];
+         }
+         else if(&stats_p[i] == &stats->time_spent_mmap_crit_sec) {
+            time_mmap_sum += stats_p[i];
+         }
+         else if(&stats_p[i] == &stats->time_spent_munmap_lock) {
+            time_munmap_sum += stats_p[i];
+         }
+         else if(&stats_p[i] == &stats->time_spent_munmap_crit_sec) {
+            time_munmap_sum += stats_p[i];
          }
 
-         ((uint64_t *) global_stats)[i] += ((uint64_t*) stats)[i];
+
+         ((uint64_t *) global_stats)[i] += stats_p[i];
       }
 
       if(stats->max_nr_migrations_per_4k_page > global_stats->max_nr_migrations_per_4k_page) {
          global_stats->max_nr_migrations_per_4k_page = stats->max_nr_migrations_per_4k_page;
+      }
+   
+      if(time_mmap_sum > max_time_mmap) {
+         max_time_mmap = time_mmap_sum;
+      }
+
+      if(time_munmap_sum > max_time_munmap) {
+         max_time_munmap = time_munmap_sum;
       }
    }
 
@@ -943,10 +972,37 @@ static int display_replication_stats(struct seq_file *m, void* v)
    seq_printf(m, "[GLOBAL] Time spent acquiring locks (global): %lu cycles\n\n", time_lock);
    
    seq_printf(m, "[GLOBAL] Time spent acquiring spinlocks (total, global): %lu cycles\n", (unsigned long) global_stats->time_spent_spinlocks);
-   seq_printf(m, "[GLOBAL] Time spent in mmap (total, global): %lu cycles\n", (unsigned long) global_stats->time_spent_mmap);
-   seq_printf(m, "[GLOBAL] Time spent in brk (total, global): %lu cycles\n", (unsigned long) global_stats->time_spent_brk);
-   seq_printf(m, "[GLOBAL] Time spent in munmap (total, global): %lu cycles\n", (unsigned long) global_stats->time_spent_munmap);
-   seq_printf(m, "[GLOBAL] Time spent in mprotect (total, global): %lu cycles\n\n", (unsigned long) global_stats->time_spent_mprotect);
+
+   if(global_stats->nr_mmap) {
+      avg1 = global_stats->time_spent_mmap_lock / global_stats->nr_mmap;
+      avg2 = global_stats->time_spent_mmap_crit_sec / global_stats->nr_mmap;
+   }
+   seq_printf(m, "[GLOBAL] Time spent in mmap (lock, crit. section): %lu cycles, %lu cycles (%lu cycles, %lu cycles, %lu cycles)\n",
+      avg1, avg2, (unsigned long) global_stats->time_spent_mmap_lock, (unsigned long) global_stats->time_spent_mmap_crit_sec, max_time_mmap);
+
+   avg1 = avg2 = 0;
+   if(global_stats->nr_munmap) {
+      avg1 = global_stats->time_spent_munmap_lock / global_stats->nr_munmap;
+      avg2 = global_stats->time_spent_munmap_crit_sec / global_stats->nr_munmap;
+   }
+   seq_printf(m, "[GLOBAL] Time spent in munmap (lock, crit. section): %lu cycles, %lu cycles (%lu cycles, %lu cycles, %lu cycles)\n",
+      avg1, avg2, (unsigned long) global_stats->time_spent_munmap_lock, (unsigned long) global_stats->time_spent_munmap_crit_sec, max_time_munmap);
+
+   avg1 = avg2 = 0;
+   if(global_stats->nr_mprotect) {
+      avg1 = global_stats->time_spent_mprotect_lock / global_stats->nr_mprotect;
+      //avg2 = global_stats->time_spent_mprotect_crit_sec / global_stats->nr_mprotect;
+   }
+   seq_printf(m, "[GLOBAL] Time spent in mprotect (lock, crit. section): %lu cycles, %lu cycles (%lu cycles, %lu cycles, %lu cycles)\n",
+      avg1, avg2, (unsigned long) global_stats->time_spent_mprotect_lock, (unsigned long) 0, (unsigned long) 0);
+
+   avg1 = avg2 = 0;
+   if(global_stats->nr_brk) {
+      avg1 = global_stats->time_spent_brk_lock / global_stats->nr_brk;
+      //avg2 = global_stats->time_spent_brk_crit_sec / global_stats->nr_brk;
+   }
+   seq_printf(m, "[GLOBAL] Time spent in brk (lock, crit. section): %lu cycles, %lu cycles (%lu cycles, %lu cycles, %lu cycles)\n",
+      avg1, avg2, (unsigned long) global_stats->time_spent_brk_lock, (unsigned long) 0, (unsigned long) 0);
 
    seq_printf(m, "[GLOBAL] Number of page faults: %lu\n", (unsigned long) global_stats->nr_pgfault);
    seq_printf(m, "[GLOBAL] Time spent in the page fault handler: %lu cycles\n\n", time_pgfault);

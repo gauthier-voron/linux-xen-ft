@@ -171,11 +171,19 @@ typedef struct __attribute__((packed)) {
 
    uint64_t time_spent_spinlocks;
 
-   uint64_t time_spent_mmap;
-   uint64_t time_spent_brk;
-   uint64_t time_spent_munmap;
-   uint64_t time_spent_mprotect;
+   uint64_t time_spent_mmap_lock;
+   uint64_t time_spent_brk_lock;
+   uint64_t time_spent_munmap_lock;
+   uint64_t time_spent_mprotect_lock;
 
+   uint64_t time_spent_mmap_crit_sec;
+   uint64_t time_spent_munmap_crit_sec;
+
+   uint64_t nr_mmap;
+   uint64_t nr_munmap;
+   uint64_t nr_brk;
+   uint64_t nr_mprotect;
+   
    uint64_t nr_pgfault;
    uint64_t time_spent_in_pgfault_handler;
    uint64_t time_spent_in_pgfault_crit_sec;
