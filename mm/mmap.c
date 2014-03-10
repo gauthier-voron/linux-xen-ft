@@ -2524,35 +2524,38 @@ int vm_munmap(unsigned long start, size_t len)
 {
 	int ret;
 	struct mm_struct *mm = current->mm;
-   // FGAUD
-   unsigned long rdt_start, rdt_stop;
-   replication_stats_t* stats;
-   unsigned long duration;
-   //
+	// FGAUD
+	unsigned long rdt_start, rdt_stop;
+	replication_stats_t* stats;
+	unsigned long duration;
+	//
 
 	duration = down_write(&mm->mmap_sem);
 
-   rdtscll(rdt_start);
+	current->is_in_mm_lock = 1;
+
+	rdtscll(rdt_start);
 
 	ret = do_munmap(mm, start, len);
 	up_write(&mm->mmap_sem);
 
-   rdtscll(rdt_stop);
+	current->is_in_mm_lock = 0;
+	rdtscll(rdt_stop);
 
-   // FGAUD
-   rdtscll(rdt_stop);
-   read_lock(&reset_stats_rwl);
-   stats = get_cpu_ptr(&replication_stats_per_core);
-   spin_lock(&stats->lock);
+	// FGAUD
+	rdtscll(rdt_stop);
+	read_lock(&reset_stats_rwl);
+	stats = get_cpu_ptr(&replication_stats_per_core);
+	spin_lock(&stats->lock);
 
-   stats->time_spent_munmap_lock += duration;
-   stats->time_spent_munmap_crit_sec += (rdt_stop - rdt_start);
+	stats->time_spent_munmap_lock += duration;
+	stats->time_spent_munmap_crit_sec += (rdt_stop - rdt_start);
 
-   stats->nr_munmap++;
-   spin_unlock(&stats->lock);
-   put_cpu_ptr(&replication_stats_per_core);
-   read_unlock(&reset_stats_rwl);
-   //
+	stats->nr_munmap++;
+	spin_unlock(&stats->lock);
+	put_cpu_ptr(&replication_stats_per_core);
+	read_unlock(&reset_stats_rwl);
+	//
 
 	return ret;
 }

@@ -208,6 +208,30 @@ typedef struct __attribute__((packed)) {
 extern rwlock_t reset_stats_rwl;
 DECLARE_PER_CPU(replication_stats_t, replication_stats_per_core);
 
+typedef struct __attribute__((packed)) {
+   uint64_t nr_tsk_migrations_idle;
+   uint64_t nr_tsk_migrations_rebalance;
+   uint64_t nr_tsk_migrations_wakeup;
+   uint64_t nr_tsk_migrations_wakeup_new;
+
+   uint64_t nr_tsk_migrations_others;
+
+   uint64_t nr_tsk_migrations_in_mm_lock;
+} tsk_migrations_stats_t;
+
+DECLARE_PER_CPU(tsk_migrations_stats_t, tsk_migrations_stats_per_core);
+extern int start_carrefour_profiling;
+
+// We don't use get_cpu_ptr, because we don't really care about preemption
+#define INCR_TSKMIGR_STAT_VALUE(entry, value) { \
+   if(likely(start_carrefour_profiling)){ \
+      tsk_migrations_stats_t* stats; \
+      stats = this_cpu_ptr(&tsk_migrations_stats_per_core); \
+      \
+      __sync_fetch_and_add(&stats->entry, (value)); \
+   } \
+}
+
 #define INCR_REP_STAT_VALUE(entry, value) { \
    replication_stats_t* stats; \
    read_lock(&reset_stats_rwl); \

@@ -1596,6 +1596,10 @@ struct task_struct {
    raw_spinlock_t *      spinlock_lock_owns;
 #endif
 
+   // Test
+   int is_in_mm_lock;
+
+   // Pinthreads
    int pinthread_done;
    int pinthread_data;
    int pinthread_session_id;

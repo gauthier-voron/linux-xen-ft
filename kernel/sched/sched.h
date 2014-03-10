@@ -8,6 +8,9 @@
 
 #include "cpupri.h"
 
+// FGAUD
+#include <linux/replicate.h>
+
 extern __read_mostly int scheduler_running;
 
 /*

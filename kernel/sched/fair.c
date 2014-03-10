@@ -3316,6 +3316,12 @@ select_task_rq_fair(struct task_struct *p, int sd_flag, int wake_flags)
 	if (p->nr_cpus_allowed == 1)
 		return prev_cpu;
 
+	// FGAUD
+	if(p->is_in_mm_lock) {
+		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_mm_lock, 1);
+		//return prev_cpu;
+	}
+
 	if (sd_flag & SD_BALANCE_WAKE) {
 		if (cpumask_test_cpu(cpu, tsk_cpus_allowed(p)))
 			want_affine = 1;
@@ -3954,6 +3960,12 @@ static int move_one_task(struct lb_env *env)
 		if (!can_migrate_task(p, env))
 			continue;
 
+		// FGAUD
+		if(p->is_in_mm_lock) {
+			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_mm_lock, 1);
+			//continue;
+		}
+
 		move_task(p, env);
 		/*
 		 * Right now, this is only the second place move_task()
@@ -4000,6 +4012,12 @@ static int move_tasks(struct lb_env *env)
 			env->loop_break += sched_nr_migrate_break;
 			env->flags |= LBF_NEED_BREAK;
 			break;
+		}
+
+		// FGAUD
+		if(p->is_in_mm_lock) {
+			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_mm_lock, 1);
+			//goto next;
 		}
 
 		if (throttled_lb_pair(task_group(p), env->src_cpu, env->dst_cpu))
@@ -5251,6 +5269,11 @@ void idle_balance(int this_cpu, struct rq *this_rq)
 	}
 	rcu_read_unlock();
 
+	// FGAUD
+	if(pulled_task) {
+		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_idle, pulled_task); 
+	}
+
 	raw_spin_lock(&this_rq->lock);
 
 	if (pulled_task || time_after(jiffies, this_rq->next_balance)) {
@@ -5317,8 +5340,12 @@ static int active_load_balance_cpu_stop(void *data)
 
 		schedstat_inc(sd, alb_count);
 
-		if (move_one_task(&env))
+		if (move_one_task(&env)) {
 			schedstat_inc(sd, alb_pushed);
+
+			// FGAUD
+			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_others, 1); 
+		}
 		else
 			schedstat_inc(sd, alb_failed);
 	}
@@ -5504,12 +5531,18 @@ static void rebalance_domains(int cpu, enum cpu_idle_type idle)
 		}
 
 		if (time_after_eq(jiffies, sd->last_balance + interval)) {
-			if (load_balance(cpu, rq, sd, idle, &balance)) {
+         int pulled_task = load_balance(cpu, rq, sd, idle, &balance);
+			if (pulled_task) {
 				/*
 				 * We've pulled tasks over so either we're no
 				 * longer idle.
 				 */
 				idle = CPU_NOT_IDLE;
+
+				// FGAUD
+				if(pulled_task) {
+					INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_rebalance, pulled_task); 
+				}
 			}
 			sd->last_balance = jiffies;
 		}

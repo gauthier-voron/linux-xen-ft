@@ -129,6 +129,9 @@ static struct kmem_cache *work_cachep;
 #if ENABLE_STATS
 DEFINE_RWLOCK(reset_stats_rwl);
 DEFINE_PER_CPU(replication_stats_t, replication_stats_per_core);
+DEFINE_PER_CPU(tsk_migrations_stats_t, tsk_migrations_stats_per_core);
+
+int start_carrefour_profiling = 0;
 #endif
 /** END **/
 
@@ -871,6 +874,8 @@ static const struct file_operations lock_handlers = {
 static int display_replication_stats(struct seq_file *m, void* v)
 {
    replication_stats_t* global_stats;
+   tsk_migrations_stats_t* global_tsk_stats;
+
    int cpu, i, j;
    unsigned long time_rd_lock      = 0;
    unsigned long time_wr_lock      = 0;
@@ -880,25 +885,30 @@ static int display_replication_stats(struct seq_file *m, void* v)
    unsigned long nr_migrations     = 0;
 
    unsigned long avg1 = 0, avg2 = 0;
+	int ratio = 0;
 
    unsigned long max_time_pgflt = 0;
    unsigned long max_time_mmap = 0;
    unsigned long max_time_munmap = 0;
+
+	unsigned long total_nr_task_migrations = 0;
 
    seq_printf(m, "#Number of online cpus: %d\n", num_online_cpus());
    seq_printf(m, "#Number of online nodes: %d\n", num_online_nodes());
 
    /** Merging stats **/
    global_stats = kmalloc(sizeof(replication_stats_t), GFP_KERNEL);
-   if(!global_stats) {
+   global_tsk_stats = kmalloc(sizeof(tsk_migrations_stats_t), GFP_KERNEL | __GFP_ZERO);
+   if(!global_stats || !global_tsk_stats) {
       DEBUG_PANIC("No more memory ?\n");
    }
-   memset(global_stats, 0, sizeof(replication_stats_t));
 
    write_lock(&reset_stats_rwl);
 
    for_each_online_cpu(cpu) {
       replication_stats_t * stats = per_cpu_ptr(&replication_stats_per_core, cpu);
+      tsk_migrations_stats_t* tsk_stats = per_cpu_ptr(&tsk_migrations_stats_per_core, cpu);
+
       unsigned long time_mmap_sum = 0;
       unsigned long time_munmap_sum = 0;
 
@@ -927,8 +937,17 @@ static int display_replication_stats(struct seq_file *m, void* v)
             time_munmap_sum += stats_p[i];
          }
 
-
          ((uint64_t *) global_stats)[i] += stats_p[i];
+      }
+
+      // Automatic merging of everything
+      stats_p = (uint64_t*) tsk_stats;
+      for(i = 0; i < sizeof(tsk_migrations_stats_t) / sizeof(uint64_t); i++) {
+         ((uint64_t *) global_tsk_stats)[i] += stats_p[i];
+
+			if(&stats_p[i] != &tsk_stats->nr_tsk_migrations_in_mm_lock) {
+				total_nr_task_migrations += stats_p[i];
+			}
       }
 
       if(stats->max_nr_migrations_per_4k_page > global_stats->max_nr_migrations_per_4k_page) {
@@ -945,6 +964,7 @@ static int display_replication_stats(struct seq_file *m, void* v)
    }
 
    write_unlock(&reset_stats_rwl);
+
 
    if(global_stats->nr_readlock_taken) {
       time_rd_lock = (unsigned long) (global_stats->time_spent_acquiring_readlocks / global_stats->nr_readlock_taken);
@@ -1040,7 +1060,25 @@ static int display_replication_stats(struct seq_file *m, void* v)
       }
       seq_printf(m, "\n");
    }
-   seq_printf(m, "[GLOBAL] Number of migrations: %lu\n", nr_migrations);
+   seq_printf(m, "[GLOBAL] Number of migrations: %lu\n\n", nr_migrations);
+
+	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_idle * 100 / total_nr_task_migrations : 0; 
+   seq_printf(m, "[GLOBAL] Number of task migrations due to load balance (idle): %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_idle, ratio);
+
+	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_rebalance * 100 / total_nr_task_migrations : 0; 
+   seq_printf(m, "[GLOBAL] Number of task migrations due to load balance (rebalance): %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_rebalance, ratio);
+
+	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_wakeup * 100 / total_nr_task_migrations : 0; 
+   seq_printf(m, "[GLOBAL] Number of task migrations due to wake up: %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_wakeup, ratio);
+
+	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_wakeup_new * 100 / total_nr_task_migrations : 0; 
+   seq_printf(m, "[GLOBAL] Number of task migrations due to wake up (new): %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_wakeup_new, ratio);
+
+	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_others * 100 / total_nr_task_migrations : 0; 
+   seq_printf(m, "[GLOBAL] Number of task migrations due to others: %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_others, ratio);
+
+	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_in_mm_lock * 100 / total_nr_task_migrations : 0; 
+   seq_printf(m, "[GLOBAL] Number of task migrations while mmap/munmap in mm lock: %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_in_mm_lock, ratio);
 
    kfree(global_stats);
 
@@ -1058,7 +1096,9 @@ static ssize_t ibs_proc_write(struct file *file, const char __user *buf, size_t 
    for_each_online_cpu(cpu) {
       /** Don't need to disable preemption here because we have the write lock **/
       replication_stats_t * stats = per_cpu_ptr(&replication_stats_per_core, cpu);
+      tsk_migrations_stats_t * stats_tsk = per_cpu_ptr(&tsk_migrations_stats_per_core, cpu);
       memset(stats, 0, sizeof(replication_stats_t));
+      memset(stats_tsk, 0, sizeof(tsk_migrations_stats_t));
    }
 
    write_unlock(&reset_stats_rwl);
@@ -1105,6 +1145,8 @@ static int __init replicate_init(void)
       DEBUG_WARNING("Cannot create /proc/%s\n", lock_fn);
       return -ENOMEM;
    }
+
+   start_carrefour_profiling = 1;
 #endif
 
 	return 0;

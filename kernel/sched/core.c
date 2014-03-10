@@ -1473,6 +1473,10 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	cpu = select_task_rq(p, SD_BALANCE_WAKE, wake_flags);
 	if (task_cpu(p) != cpu) {
 		wake_flags |= WF_MIGRATED;
+
+		// FGAUD
+		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_wakeup, 1);
+
 		set_task_cpu(p, cpu);
 	}
 #endif /* CONFIG_SMP */
@@ -1712,6 +1716,10 @@ void wake_up_new_task(struct task_struct *p)
 	 *  - cpus_allowed can change in the fork path
 	 *  - any previously selected cpu might disappear through hotplug
 	 */
+
+	// FGAUD
+	INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_wakeup_new, 1);
+
 	set_task_cpu(p, select_task_rq(p, SD_BALANCE_FORK, 0));
 #endif
 
@@ -2609,6 +2617,15 @@ void sched_exec(void)
 
 	if (likely(cpu_active(dest_cpu))) {
 		struct migration_arg arg = { p, dest_cpu };
+
+		// FGAUD
+		if(p->is_in_mm_lock) {
+			//return ret;
+			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_mm_lock, 1);
+		}
+
+		// FGAUD
+		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_wakeup_new, 1);
 
 		raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 		stop_one_cpu(task_cpu(p), migration_cpu_stop, &arg);
@@ -4795,8 +4812,19 @@ int set_cpus_allowed_ptr(struct task_struct *p, const struct cpumask *new_mask)
 	dest_cpu = cpumask_any_and(cpu_active_mask, new_mask);
 	if (p->on_rq) {
 		struct migration_arg arg = { p, dest_cpu };
+
 		/* Need help from migration thread: drop lock and wait. */
 		task_rq_unlock(rq, p, &flags);
+
+		// FGAUD
+		if(p->is_in_mm_lock) {
+			//return ret;
+			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_mm_lock, 1);
+		}
+
+		// FGAUD
+		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_others, 1);
+
 		stop_one_cpu(cpu_of(rq), migration_cpu_stop, &arg);
 		tlb_migrate_finish(p->mm);
 		return 0;
@@ -4866,7 +4894,7 @@ static int migration_cpu_stop(void *data)
 {
 	struct migration_arg *arg = data;
 
-	/*
+   /*
 	 * The original target cpu might have gone down and we might
 	 * be on another cpu but it doesn't matter.
 	 */
@@ -4947,6 +4975,9 @@ static void migrate_tasks(unsigned int dead_cpu)
 		/* Find suitable destination for @next, with force if needed. */
 		dest_cpu = select_fallback_rq(dead_cpu, next);
 		raw_spin_unlock(&rq->lock);
+
+		// FGAUD
+		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_others, 1);
 
 		__migrate_task(next, dead_cpu, dest_cpu);
 
