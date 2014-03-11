@@ -14,7 +14,7 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/kmem.h>
 
-#include <linux/replicate.h>
+#include <linux/carrefour-stats.h>
 
 /**
  * kstrdup - allocate space for and copy an existing string
@@ -364,6 +364,7 @@ unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
 	ret = security_mmap_file(file, prot, flag);
 	if (!ret) {
 		// FGAUD
+#if ENABLE_MM_LOCK_STATS
 		unsigned long rdt_start, rdt_stop;
 		replication_stats_t* stats;
 		unsigned long duration;
@@ -371,9 +372,12 @@ unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
 
 		duration = down_write(&mm->mmap_sem);
 
-		current->is_in_mm_lock = 1;
-
 		RECORD_DURATION_START_VAL(rdt_start);
+#else
+		down_write(&mm->mmap_sem);
+#endif
+
+		current->is_in_mm_lock = 1;
 
 		ret = do_mmap_pgoff(file, addr, len, prot, flag, pgoff,
 				    &populate);
@@ -385,6 +389,7 @@ unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
 		if (populate)
 			mm_populate(ret, populate);
 
+#if ENABLE_MM_LOCK_STATS
 		// FGAUD
 		rdtscll(rdt_stop);
 		read_lock(&reset_stats_rwl);
@@ -398,6 +403,7 @@ unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
 		put_cpu_ptr(&replication_stats_per_core);
 		read_unlock(&reset_stats_rwl);
 		//
+#endif
 	}
 	return ret;
 }

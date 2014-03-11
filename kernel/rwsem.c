@@ -12,7 +12,8 @@
 
 #include <linux/atomic.h>
 
-#include <linux/replicate.h>
+// FGAUD
+#include <linux/carrefour-stats.h>
 
 /*
  * lock for reading

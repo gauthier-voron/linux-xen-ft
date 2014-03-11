@@ -29,6 +29,7 @@
 #include <asm/tlbflush.h>
 
 #include <linux/replicate.h>
+#include <linux/carrefour-stats.h>
 
 #ifndef pgprot_modify
 static inline pgprot_t pgprot_modify(pgprot_t oldprot, pgprot_t newprot)
@@ -337,7 +338,10 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 	int error = -EINVAL;
 	const int grows = prot & (PROT_GROWSDOWN|PROT_GROWSUP);
 
+
+#if ENABLE_MM_LOCK_STATS
    unsigned long duration;
+#endif
 
 	prot &= ~(PROT_GROWSDOWN|PROT_GROWSUP);
 	if (grows == (PROT_GROWSDOWN|PROT_GROWSUP)) /* can't be both */
@@ -363,7 +367,12 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 
 	vm_flags = calc_vm_prot_bits(prot);
 
+
+#if ENABLE_MM_LOCK_STATS
 	duration = down_write(&current->mm->mmap_sem);
+#else
+	down_write(&current->mm->mmap_sem);
+#endif
 
 	vma = find_vma(current->mm, start);
 	error = -ENOMEM;
@@ -430,8 +439,11 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 out:
 	up_write(&current->mm->mmap_sem);
 
+
+#if ENABLE_MM_LOCK_STATS
    INCR_REP_STAT_VALUE(time_spent_mprotect_lock, duration);
    INCR_REP_STAT_VALUE(nr_mprotect, 1);
+#endif
 
 	return error;
 }

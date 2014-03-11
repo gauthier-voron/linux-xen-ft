@@ -34,6 +34,9 @@
 
 #include "sched.h"
 
+// FGAUD
+#include <linux/carrefour-stats.h>
+
 /*
  * Targeted preemption latency for CPU-bound tasks:
  * (default: 6ms * (1 + ilog(ncpus)), units: nanoseconds)

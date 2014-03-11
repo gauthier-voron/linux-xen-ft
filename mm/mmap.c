@@ -41,6 +41,9 @@
 
 #include "internal.h"
 
+// FGAUD
+#include <linux/carrefour-stats.h>
+
 #ifndef arch_mmap_check
 #define arch_mmap_check(addr, len, flags)	(0)
 #endif
@@ -258,7 +261,12 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
 	unsigned long min_brk;
 	bool populate;
 
+#if ENABLE_MM_LOCK_STATS
 	unsigned long duration = down_write(&mm->mmap_sem);
+#else
+	down_write(&mm->mmap_sem);
+#endif
+
 #ifdef CONFIG_COMPAT_BRK
 	/*
 	 * CONFIG_COMPAT_BRK can still be overridden by setting
@@ -313,16 +321,21 @@ set_brk:
 	if (populate)
 		mm_populate(oldbrk, newbrk - oldbrk);
 
+#if ENABLE_MM_LOCK_STATS
    INCR_REP_STAT_VALUE(time_spent_brk_lock, duration);
    INCR_REP_STAT_VALUE(nr_brk, 1);
+#endif
+
 	return brk;
 
 out:
 	retval = mm->brk;
 	up_write(&mm->mmap_sem);
-   
+
+#if ENABLE_MM_LOCK_STATS
    INCR_REP_STAT_VALUE(time_spent_brk_lock, duration);
    INCR_REP_STAT_VALUE(nr_brk, 1);
+#endif
 	return retval;
 }
 
@@ -2524,6 +2537,8 @@ int vm_munmap(unsigned long start, size_t len)
 {
 	int ret;
 	struct mm_struct *mm = current->mm;
+
+#if ENABLE_MM_LOCK_STATS
 	// FGAUD
 	unsigned long rdt_start, rdt_stop;
 	replication_stats_t* stats;
@@ -2531,17 +2546,19 @@ int vm_munmap(unsigned long start, size_t len)
 	//
 
 	duration = down_write(&mm->mmap_sem);
+	rdtscll(rdt_start);
+#else
+	down_write(&mm->mmap_sem);
+#endif
 
 	current->is_in_mm_lock = 1;
-
-	rdtscll(rdt_start);
 
 	ret = do_munmap(mm, start, len);
 	up_write(&mm->mmap_sem);
 
 	current->is_in_mm_lock = 0;
-	rdtscll(rdt_stop);
 
+#if ENABLE_MM_LOCK_STATS
 	// FGAUD
 	rdtscll(rdt_stop);
 	read_lock(&reset_stats_rwl);
@@ -2556,6 +2573,7 @@ int vm_munmap(unsigned long start, size_t len)
 	put_cpu_ptr(&replication_stats_per_core);
 	read_unlock(&reset_stats_rwl);
 	//
+#endif
 
 	return ret;
 }
@@ -2677,7 +2695,11 @@ unsigned long vm_brk(unsigned long addr, unsigned long len)
 	unsigned long ret;
 	bool populate;
 
+#if ENABLE_MM_LOCK_STATS
 	unsigned long duration = down_write(&mm->mmap_sem);
+#else
+	down_write(&mm->mmap_sem);
+#endif
 
 	ret = do_brk(addr, len);
 	populate = ((mm->def_flags & VM_LOCKED) != 0);
@@ -2685,8 +2707,10 @@ unsigned long vm_brk(unsigned long addr, unsigned long len)
 	if (populate)
 		mm_populate(addr, len);
 
+#if ENABLE_MM_LOCK_STATS
    INCR_REP_STAT_VALUE(time_spent_brk_lock, duration);
    INCR_REP_STAT_VALUE(nr_brk, 1);
+#endif
 	return ret;
 }
 EXPORT_SYMBOL(vm_brk);

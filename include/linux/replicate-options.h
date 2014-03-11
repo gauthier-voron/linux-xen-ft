@@ -11,10 +11,6 @@
 #define WITH_SANITY_CHECKS             0
 #define WITH_DEBUG_LOCKS               0
 
-#define ENABLE_STATS                   1
-#define ENABLE_MIGRATION_STATS         1
-#define PRINT_PER_CORE_STATS           0
-
 #define ENABLE_PINGPONG_FIX            0 /** Once a ping pong have been detected, undo replication **/
 #define ENABLE_PINGPONG_AGGRESSIVE_FIX 0 /** Once a page has been written by two domains, undo replication **/
 #define ENABLE_COLLAPSE_FIX            0 /** If a write is done on a replicated page, undo replication **/
@@ -34,9 +30,6 @@
 #if (ENABLE_COLLAPSE_FREQ_FIX && ENABLE_PINGPONG_AGGRESSIVE_FIX && ! ENABLE_PERPAGE_STATS)
 #error "Hmm issue: ENABLE_PERPAGE_STATS must be set to 1!"
 #endif
-
-#define PROCFS_REPLICATE_STATS_FN   "carrefour_replication_stats"
-
 
 #if WITH_DEBUG_LOCKS
 #ifndef CONFIG_DEBUG_SPINLOCK

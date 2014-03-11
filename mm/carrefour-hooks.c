@@ -376,8 +376,11 @@ int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * 
    struct mm_struct *mm = NULL;
 
    int i = 0;
+	
+#if ENABLE_MIGRATION_STATS
    uint64_t start_migr, end_migr, migrated = 0;
    rdtscll(start_migr);
+#endif
 
    rcu_read_lock();
    task = find_task_by_vpid(pid);
@@ -432,8 +435,10 @@ int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * 
                printk("[WARNING] Migration of page 0x%lx failed !\n", addr);
             }
             else {
+#if ENABLE_MIGRATION_STATS
                INCR_REP_STAT_VALUE(migr_2M_from_to_node[current_node][nodes[i]], 1);
                migrated = 1;
+#endif
             }
          }
       }
@@ -442,9 +447,10 @@ int s_migrate_hugepages(pid_t pid, unsigned long nr_pages, void ** pages, int * 
    up_read(&mm->mmap_sem);
    mmput(mm);
 
+#if ENABLE_MIGRATION_STATS
    rdtscll(end_migr);
-
    INCR_MIGR_STAT_VALUE(2M, (end_migr - start_migr), migrated);
+#endif
    return 0;
 }
 EXPORT_SYMBOL(s_migrate_hugepages);

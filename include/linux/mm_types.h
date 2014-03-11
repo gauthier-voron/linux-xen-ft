@@ -51,9 +51,7 @@ typedef struct {
    //u64         time_between_two_collapses;
    //u64         last_collapse_time;
 #endif
-#if ENABLE_MIGRATION_STATS
    u64         nr_migrations;
-#endif
 
    // History for carrefour
    nodemask_t  accessed_by_nodes;

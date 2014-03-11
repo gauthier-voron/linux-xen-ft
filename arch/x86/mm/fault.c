@@ -14,9 +14,7 @@
 #include <linux/hugetlb.h>		/* hstate_index_to_shift	*/
 #include <linux/prefetch.h>		/* prefetchw			*/
 
-/* JRF */
 #include <linux/page-flags.h>
-#include <linux/replicate.h>
 #include <linux/mmu_notifier.h>
 #include <asm/mmu_context.h>
 
@@ -25,6 +23,10 @@
 #include <asm/kmemcheck.h>		/* kmemcheck_*(), ...		*/
 #include <asm/fixmap.h>			/* VSYSCALL_START		*/
 #include <asm/context_tracking.h>	/* exception_enter(), ...	*/
+
+// FGAUD
+#include <linux/replicate.h>
+#include <linux/carrefour-stats.h>
 
 /*
  * Page fault error code bits:
@@ -1179,7 +1181,9 @@ __do_page_fault(struct pt_regs *regs, unsigned long error_code)
 	unsigned int flags = FAULT_FLAG_ALLOW_RETRY | FAULT_FLAG_KILLABLE |
 					(write ? FAULT_FLAG_WRITE : 0);
 
+#if ENABLE_GLOBAL_STATS
    unsigned long crit_sec_start;
+#endif
 
    RECORD_DURATION_START;
 

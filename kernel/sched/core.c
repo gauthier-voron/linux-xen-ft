@@ -89,6 +89,9 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
 
+// FGAUD
+#include <linux/carrefour-stats.h>
+
 void start_bandwidth_timer(struct hrtimer *period_timer, ktime_t period)
 {
 	unsigned long delta;

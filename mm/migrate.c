@@ -42,8 +42,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/migrate.h>
 
-#include <linux/replicate.h>
 #include <linux/carrefour-hooks.h>
+#include <linux/carrefour-stats.h>
 
 #include <linux/mmu_notifier.h>
 
@@ -1620,10 +1620,12 @@ int migrate_misplaced_page(struct page *page, int node)
 	pg_data_t *pgdat = NODE_DATA(node);
 	int isolated;
 	int nr_remaining;
-   unsigned long start, end;
 	LIST_HEAD(migratepages);
 
+#if ENABLE_MIGRATION_STATS
+   unsigned long start, end;
    rdtscll(start);
+#endif
 
 	/*
 	 * Don't migrate pages that are mapped in multiple processes.
@@ -1652,21 +1654,28 @@ int migrate_misplaced_page(struct page *page, int node)
 		isolated = 0;
 	} else {
 		count_vm_numa_event(NUMA_PAGE_MIGRATE);
-      INCR_REP_STAT_VALUE(migr_4k_from_to_node[page_to_nid(page)][node], 1);
 
+#if ENABLE_MIGRATION_STATS
+      INCR_REP_STAT_VALUE(migr_4k_from_to_node[page_to_nid(page)][node], 1);
+#endif
    }
 	BUG_ON(!list_empty(&migratepages));
 
+#if ENABLE_MIGRATION_STATS
    rdtscll(end);
    INCR_MIGR_STAT_VALUE(4k, (end - start), isolated); 
+#endif
 
 	return isolated;
 
 out:
 	put_page(page);
 
+
+#if ENABLE_MIGRATION_STATS
    rdtscll(end);
    INCR_MIGR_STAT_VALUE(4k, (end - start), 0); 
+#endif
 
 	return 0;
 }
@@ -1691,13 +1700,14 @@ int migrate_misplaced_transhuge_page(struct mm_struct *mm,
 	struct mem_cgroup *memcg = NULL;
 	int page_lru = page_is_file_cache(page);
 
+#if ENABLE_MIGRATION_STATS
    /** FGAUD **/
 	int current_node = page_to_nid(page);
    unsigned long start, end;
-   
    unsigned migrated = 0;
 
    rdtscll(start);
+#endif
 
 	/*
 	 * Don't migrate pages that are mapped in multiple processes.
@@ -1800,17 +1810,23 @@ int migrate_misplaced_transhuge_page(struct mm_struct *mm,
 	count_vm_events(PGMIGRATE_SUCCESS, HPAGE_PMD_NR);
 	count_vm_numa_events(NUMA_PAGE_MIGRATE, HPAGE_PMD_NR);
 
+#if ENABLE_MIGRATION_STATS
    /** FGAUD: Stats **/
    migrated = 1;
    INCR_REP_STAT_VALUE(migr_2M_from_to_node[current_node][node], 1);
+#endif
 
 out:
 	mod_zone_page_state(page_zone(page),
 			NR_ISOLATED_ANON + page_lru,
 			-HPAGE_PMD_NR);
 
+#if ENABLE_MIGRATION_STATS
    rdtscll(end);
-   INCR_MIGR_STAT_VALUE(2M, (end - start), migrated);
+	if(migrated) {
+		INCR_MIGR_STAT_VALUE(2M, (end - start), migrated);
+	}
+#endif
 
 	return isolated;
 
@@ -1820,8 +1836,10 @@ out_dropref:
 	unlock_page(page);
 	put_page(page);
 
+#if ENABLE_MIGRATION_STATS
    rdtscll(end);
    INCR_MIGR_STAT_VALUE(2M, (end - start), 0);
+#endif
 
 	return 0;
 }
