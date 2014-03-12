@@ -173,7 +173,7 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
    seq_printf(m, "#Number of online nodes: %d\n", num_online_nodes());
 
    /** Merging stats **/
-   global_stats = kmalloc(sizeof(replication_stats_t), GFP_KERNEL);
+   global_stats = kmalloc(sizeof(replication_stats_t), GFP_KERNEL | __GFP_ZERO);
    global_tsk_stats = kmalloc(sizeof(tsk_migrations_stats_t), GFP_KERNEL | __GFP_ZERO);
    if(!global_stats || !global_tsk_stats) {
       printk(KERN_CRIT "No more memory ?\n");
@@ -424,6 +424,10 @@ static int __init carrefour_stats_init(void)
    for_each_online_cpu(cpu) {
       /** We haven't disable premption here but I think that's not a big deal because it's during the initalization **/
       replication_stats_t * stats = per_cpu_ptr(&replication_stats_per_core, cpu);
+#if ENABLE_TSK_MIGRATION_STATS
+      tsk_migrations_stats_t * stats_tsk = per_cpu_ptr(&tsk_migrations_stats_per_core, cpu);
+      memset(stats_tsk, 0, sizeof(tsk_migrations_stats_t));
+#endif
       memset(stats, 0, sizeof(replication_stats_t));
    }
 

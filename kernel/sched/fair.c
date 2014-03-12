@@ -3322,13 +3322,15 @@ select_task_rq_fair(struct task_struct *p, int sd_flag, int wake_flags)
 	// FGAUD
 	if(p->is_in_mm_lock) {
 		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_mm_lock, 1);
-		//return prev_cpu;
 	}
 
 	if (sd_flag & SD_BALANCE_WAKE) {
 		if (cpumask_test_cpu(cpu, tsk_cpus_allowed(p)))
 			want_affine = 1;
+
 		new_cpu = prev_cpu;
+
+		//return prev_cpu;
 	}
 
 	rcu_read_lock();
