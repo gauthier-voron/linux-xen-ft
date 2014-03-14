@@ -157,6 +157,8 @@ typedef int tsk_migrations_stats_t; // make sure that the name exists
 #define INCR_TSKMIGR_STAT_VALUE(e,v) do {} while (0)
 #endif
 
+void record_fn_call(const char* fn_name, unsigned long duration);
+
 #if !ENABLE_GLOBAL_STATS && (ENABLE_MIGRATION_STATS || ENABLE_MM_LOCK_STATS || ENABLE_TSK_MIGRATION_STATS)
 #error "Cannot enable ENABLE_MIGRATION_STATS or ENABLE_MM_LOCK_STATS or ENABLE_TSK_MIGRATION_STATS without ENABLE_GLOBAL_STATS"
 #endif

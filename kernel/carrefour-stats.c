@@ -19,6 +19,97 @@ int start_carrefour_profiling = 0;
 DEFINE_PER_CPU(tsk_migrations_stats_t, tsk_migrations_stats_per_core);
 #endif
 
+#define MAX_FUNCTIONS		50
+#define MAX_FN_NAME_LENGTH 50
+struct fn_stats_t {
+	struct rb_node node;
+
+	char name[MAX_FN_NAME_LENGTH];
+	unsigned long time_spent;
+	unsigned long nr_calls;
+};
+
+struct fn_stats_tree_t {
+	struct rb_root root;
+	spinlock_t		lock;
+
+	struct fn_stats_t fn_entries[MAX_FUNCTIONS];
+	int index;
+};
+
+struct fn_stats_tree_t global_tree;
+DEFINE_RWLOCK(reset_fn_stats_rwl);
+
+struct fn_stats_t* find_fn_in_tree(struct rb_root *root, const char* fn_name) {
+   struct rb_node **new = &(root->rb_node), *parent = NULL;
+   struct fn_stats_t* f = NULL;
+
+   /* Figure out where to put new node */
+   while (*new) {
+      struct fn_stats_t *this = container_of(*new, struct fn_stats_t, node);
+      parent = *new;
+
+      if (strcmp(fn_name, this->name) < 0) {
+         new = &((*new)->rb_left);
+      }
+      else if (strcmp(fn_name, this->name) > 0) {
+         new = &((*new)->rb_right);
+      }
+      else {
+         return this;
+      }
+   }
+
+   /* Add new node and rebalance tree. */
+   if(global_tree.index < MAX_FUNCTIONS) {
+      f = &global_tree.fn_entries[global_tree.index++];
+      strncpy(f->name, fn_name, MAX_FN_NAME_LENGTH);
+      f->name[MAX_FN_NAME_LENGTH-1] = 0;
+
+      rb_link_node(&f->node, parent, new); 
+      rb_insert_color(&f->node, root);
+   }
+   else {
+      printk("Warning, not enough space in tree. Consider increasing MAX_FUNCTIONS\n");
+   }
+
+   return f;
+}
+
+void record_fn_call(const char* fn_name, unsigned long duration) {
+	struct fn_stats_t* f;
+
+	read_lock(&reset_fn_stats_rwl);
+	spin_lock(&global_tree.lock);
+
+	f = find_fn_in_tree(&global_tree.root, fn_name);
+	if(f) {
+		f->nr_calls++;
+		f->time_spent += duration;
+	}	
+
+	spin_unlock(&global_tree.lock);
+
+	read_unlock(&reset_fn_stats_rwl);
+}
+
+void fn_tree_print(struct fn_stats_tree_t* tree) {
+	int i;
+	for(i = 0; i < tree->index; i++) {
+		printk("%s -- nr calls %lu -- time spent %lu\n", tree->fn_entries[i].name, tree->fn_entries[i].nr_calls, tree->fn_entries[i].time_spent);
+	}
+}
+
+void fn_tree_init(struct fn_stats_tree_t* tree) {
+	write_lock(&reset_fn_stats_rwl);
+
+	memset(&global_tree, 0, sizeof(global_tree));
+   global_tree.root = RB_ROOT;
+	spin_lock_init(&global_tree.lock);
+
+	write_unlock(&reset_fn_stats_rwl);
+}
+
 /**
 PROCFS Functions
 We create here entries in the proc system that will allows us to configure replication and gather stats :)
@@ -379,6 +470,8 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
    seq_printf(m, "[GLOBAL] Number of task migrations while mmap/munmap in mm lock: %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_in_mm_lock, ratio);
 #endif
 
+	fn_tree_print(&global_tree);
+
    kfree(global_stats);
 	kfree(global_tsk_stats);
 
@@ -405,6 +498,8 @@ static ssize_t carrefour_stats_write(struct file *file, const char __user *buf, 
 
    write_unlock(&reset_stats_rwl);
 
+	fn_tree_init(&global_tree);
+
    _lock_contention_reset();
    return count;
 }
@@ -430,6 +525,8 @@ static int __init carrefour_stats_init(void)
 #endif
       memset(stats, 0, sizeof(replication_stats_t));
    }
+
+	fn_tree_init(&global_tree);
 
    if(!proc_create(PROCFS_CARREFOUR_STATS_FN, S_IRUGO, NULL, &carrefour_stats_handlers)){
       printk(KERN_ERR "Cannot create /proc/%s\n", PROCFS_CARREFOUR_STATS_FN);
