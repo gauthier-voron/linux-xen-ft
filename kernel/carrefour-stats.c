@@ -23,13 +23,15 @@ DEFINE_PER_CPU(tsk_migrations_stats_t, tsk_migrations_stats_per_core);
 #endif
 
 #define MAX_FUNCTIONS		100
-#define MAX_FN_NAME_LENGTH 50
+#define MAX_FN_NAME_LENGTH 30
 struct fn_stats_t {
 	struct rb_node node;
 
 	char name[MAX_FN_NAME_LENGTH];
 	unsigned long time_spent;
 	unsigned long nr_calls;
+
+	unsigned long max_time_spent_per_core;
 };
 
 struct fn_stats_tree_t {
@@ -89,6 +91,10 @@ void merge_fn_arrays(struct fn_stats_tree_t* dest, struct fn_stats_tree_t* src) 
 		if(f){
 			f->nr_calls += src->fn_entries[i].nr_calls;
 			f->time_spent += src->fn_entries[i].time_spent;
+
+			if(src->fn_entries[i].time_spent > f->max_time_spent_per_core) {
+				f->max_time_spent_per_core = src->fn_entries[i].time_spent;
+			}
 		}
 		else {
 			printk("Warning, not enough space in merge tree. Consider increasing MAX_FUNCTIONS\n");
@@ -146,7 +152,10 @@ void fn_tree_print(struct seq_file *m, struct fn_stats_tree_t* tree, unsigned lo
 	int i;
 	for(i = 0; i < tree->index; i++){
 		int ratio = duration ? (tree->fn_entries[i].time_spent * 100 / (duration * num_online_cpus())): 0;
-		seq_printf(m, "%*s -- nr calls %20lu -- time spent %20lu -- %2d %%\n", MAX_FN_NAME_LENGTH, tree->fn_entries[i].name, tree->fn_entries[i].nr_calls, tree->fn_entries[i].time_spent, ratio);
+		int ratio_per_core = duration ? (tree->fn_entries[i].max_time_spent_per_core * 100 / duration): 0;
+		unsigned long per_call = tree->fn_entries[i].nr_calls ? (tree->fn_entries[i].time_spent/tree->fn_entries[i].nr_calls): 0;
+		seq_printf(m, "%*s -- nr calls %15lu -- time spent %20lu -- per call %13lu -- %2d %% -- max per core %2d %%\n",
+				MAX_FN_NAME_LENGTH, tree->fn_entries[i].name, tree->fn_entries[i].nr_calls, tree->fn_entries[i].time_spent, per_call, ratio, ratio_per_core);
 	}
 }
 
