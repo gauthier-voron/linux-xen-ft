@@ -261,11 +261,12 @@ SYSCALL_DEFINE1(brk, unsigned long, brk)
 	unsigned long min_brk;
 	bool populate;
 
-#if ENABLE_MM_LOCK_STATS
-	unsigned long duration = down_write(&mm->mmap_sem);
-#else
-	down_write(&mm->mmap_sem);
+#if ENABLE_MM_FUN_STATS
+	unsigned long rdt_start, rdt_stop;
+	rdtscll(rdt_start);
 #endif
+
+	down_write(&mm->mmap_sem);
 
 #ifdef CONFIG_COMPAT_BRK
 	/*
@@ -321,9 +322,10 @@ set_brk:
 	if (populate)
 		mm_populate(oldbrk, newbrk - oldbrk);
 
-#if ENABLE_MM_LOCK_STATS
-   INCR_REP_STAT_VALUE(time_spent_brk_lock, duration);
-   INCR_REP_STAT_VALUE(nr_brk, 1);
+#if ENABLE_MM_FUN_STATS
+	// FGAUD
+	rdtscll(rdt_stop);
+	record_fn_call(__FUNCTION__, NULL, (rdt_stop - rdt_start));
 #endif
 
 	return brk;
@@ -332,10 +334,12 @@ out:
 	retval = mm->brk;
 	up_write(&mm->mmap_sem);
 
-#if ENABLE_MM_LOCK_STATS
-   INCR_REP_STAT_VALUE(time_spent_brk_lock, duration);
-   INCR_REP_STAT_VALUE(nr_brk, 1);
+#if ENABLE_MM_FUN_STATS
+	// FGAUD
+	rdtscll(rdt_stop);
+	record_fn_call(__FUNCTION__, NULL, (rdt_stop - rdt_start));
 #endif
+
 	return retval;
 }
 
@@ -2538,18 +2542,12 @@ int vm_munmap(unsigned long start, size_t len)
 	int ret;
 	struct mm_struct *mm = current->mm;
 
-#if ENABLE_MM_LOCK_STATS
-	// FGAUD
+#if ENABLE_MM_FUN_STATS
 	unsigned long rdt_start, rdt_stop;
-	replication_stats_t* stats;
-	unsigned long duration;
-	//
-
-	duration = down_write(&mm->mmap_sem);
 	rdtscll(rdt_start);
-#else
-	down_write(&mm->mmap_sem);
 #endif
+
+	down_write(&mm->mmap_sem);
 
 	current->is_in_mm_lock = 1;
 
@@ -2558,21 +2556,9 @@ int vm_munmap(unsigned long start, size_t len)
 
 	current->is_in_mm_lock = 0;
 
-#if ENABLE_MM_LOCK_STATS
-	// FGAUD
+#if ENABLE_MM_FUN_STATS
 	rdtscll(rdt_stop);
-	read_lock(&reset_stats_rwl);
-	stats = get_cpu_ptr(&replication_stats_per_core);
-	spin_lock(&stats->lock);
-
-	stats->time_spent_munmap_lock += duration;
-	stats->time_spent_munmap_crit_sec += (rdt_stop - rdt_start);
-
-	stats->nr_munmap++;
-	spin_unlock(&stats->lock);
-	put_cpu_ptr(&replication_stats_per_core);
-	read_unlock(&reset_stats_rwl);
-	//
+	record_fn_call(__FUNCTION__, NULL, (rdt_stop - rdt_start));
 #endif
 
 	return ret;
@@ -2695,11 +2681,12 @@ unsigned long vm_brk(unsigned long addr, unsigned long len)
 	unsigned long ret;
 	bool populate;
 
-#if ENABLE_MM_LOCK_STATS
-	unsigned long duration = down_write(&mm->mmap_sem);
-#else
-	down_write(&mm->mmap_sem);
+#if ENABLE_MM_FUN_STATS
+	unsigned long rdt_start, rdt_stop;
+	rdtscll(rdt_start);
 #endif
+
+	down_write(&mm->mmap_sem);
 
 	ret = do_brk(addr, len);
 	populate = ((mm->def_flags & VM_LOCKED) != 0);
@@ -2707,10 +2694,12 @@ unsigned long vm_brk(unsigned long addr, unsigned long len)
 	if (populate)
 		mm_populate(addr, len);
 
-#if ENABLE_MM_LOCK_STATS
-   INCR_REP_STAT_VALUE(time_spent_brk_lock, duration);
-   INCR_REP_STAT_VALUE(nr_brk, 1);
+#if ENABLE_MM_FUN_STATS
+	// FGAUD
+	rdtscll(rdt_stop);
+	record_fn_call(__FUNCTION__, NULL, (rdt_stop - rdt_start));
 #endif
+
 	return ret;
 }
 EXPORT_SYMBOL(vm_brk);

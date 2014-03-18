@@ -363,19 +363,12 @@ unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
 
 	ret = security_mmap_file(file, prot, flag);
 	if (!ret) {
-		// FGAUD
-#if ENABLE_MM_LOCK_STATS
+#if ENABLE_MM_FUN_STATS
 		unsigned long rdt_start, rdt_stop;
-		replication_stats_t* stats;
-		unsigned long duration;
-		//
-
-		duration = down_write(&mm->mmap_sem);
-
-		RECORD_DURATION_START_VAL(rdt_start);
-#else
-		down_write(&mm->mmap_sem);
+		rdtscll(rdt_start);
 #endif
+
+		down_write(&mm->mmap_sem);
 
 		current->is_in_mm_lock = 1;
 
@@ -389,20 +382,10 @@ unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
 		if (populate)
 			mm_populate(ret, populate);
 
-#if ENABLE_MM_LOCK_STATS
+#if ENABLE_MM_FUN_STATS
 		// FGAUD
 		rdtscll(rdt_stop);
-		read_lock(&reset_stats_rwl);
-		stats = get_cpu_ptr(&replication_stats_per_core);
-		spin_lock(&stats->lock);
-
-		stats->time_spent_mmap_lock += duration;
-		stats->time_spent_mmap_crit_sec += (rdt_stop - rdt_start);
-		stats->nr_mmap++;
-		spin_unlock(&stats->lock);
-		put_cpu_ptr(&replication_stats_per_core);
-		read_unlock(&reset_stats_rwl);
-		//
+		record_fn_call(__FUNCTION__, NULL, (rdt_stop - rdt_start));
 #endif
 	}
 	return ret;

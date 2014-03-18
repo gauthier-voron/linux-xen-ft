@@ -8,18 +8,21 @@
 #include <linux/seq_file.h>
 #include <linux/module.h>
 
+#include <linux/sort.h>
+
 #if ENABLE_GLOBAL_STATS
 
 DEFINE_RWLOCK(reset_stats_rwl);
 DEFINE_PER_CPU(replication_stats_t, replication_stats_per_core);
 
 int start_carrefour_profiling = 0;
+u64 last_rdt_carrefour_stats = 0;
 
 #if ENABLE_TSK_MIGRATION_STATS
 DEFINE_PER_CPU(tsk_migrations_stats_t, tsk_migrations_stats_per_core);
 #endif
 
-#define MAX_FUNCTIONS		50
+#define MAX_FUNCTIONS		100
 #define MAX_FN_NAME_LENGTH 50
 struct fn_stats_t {
 	struct rb_node node;
@@ -37,11 +40,11 @@ struct fn_stats_tree_t {
 	int index;
 };
 
-struct fn_stats_tree_t global_tree;
+DEFINE_PER_CPU(struct fn_stats_tree_t, fn_stats_tree_per_cpu);
 DEFINE_RWLOCK(reset_fn_stats_rwl);
 
-struct fn_stats_t* find_fn_in_tree(struct rb_root *root, const char* fn_name) {
-   struct rb_node **new = &(root->rb_node), *parent = NULL;
+struct fn_stats_t* find_fn_in_tree(struct fn_stats_tree_t* tree, const char* fn_name) {
+   struct rb_node **new = &(tree->root.rb_node), *parent = NULL;
    struct fn_stats_t* f = NULL;
 
    /* Figure out where to put new node */
@@ -61,13 +64,13 @@ struct fn_stats_t* find_fn_in_tree(struct rb_root *root, const char* fn_name) {
    }
 
    /* Add new node and rebalance tree. */
-   if(global_tree.index < MAX_FUNCTIONS) {
-      f = &global_tree.fn_entries[global_tree.index++];
+   if(tree->index < MAX_FUNCTIONS) {
+      f = &tree->fn_entries[tree->index++];
       strncpy(f->name, fn_name, MAX_FN_NAME_LENGTH);
       f->name[MAX_FN_NAME_LENGTH-1] = 0;
 
       rb_link_node(&f->node, parent, new); 
-      rb_insert_color(&f->node, root);
+      rb_insert_color(&f->node, &tree->root);
    }
    else {
       printk("Warning, not enough space in tree. Consider increasing MAX_FUNCTIONS\n");
@@ -76,36 +79,92 @@ struct fn_stats_t* find_fn_in_tree(struct rb_root *root, const char* fn_name) {
    return f;
 }
 
-void record_fn_call(const char* fn_name, unsigned long duration) {
+void merge_fn_arrays(struct fn_stats_tree_t* dest, struct fn_stats_tree_t* src) {
+	int i;
+	for(i = 0; i < src->index; i++) {
+		struct fn_stats_t* f;
+
+		f = find_fn_in_tree(dest, src->fn_entries[i].name);
+
+		if(f){
+			f->nr_calls += src->fn_entries[i].nr_calls;
+			f->time_spent += src->fn_entries[i].time_spent;
+		}
+		else {
+			printk("Warning, not enough space in merge tree. Consider increasing MAX_FUNCTIONS\n");
+		}
+	}
+}
+
+void record_fn_call(const char* fn_name, const char* suffix, unsigned long duration) {
 	struct fn_stats_t* f;
+	struct fn_stats_tree_t* tree = per_cpu_ptr(&fn_stats_tree_per_cpu, smp_processor_id());
+
+	char name[MAX_FN_NAME_LENGTH];
+
+	if(suffix) {
+		snprintf(name, MAX_FN_NAME_LENGTH, "%s%s", fn_name, suffix);
+		fn_name = name;
+	}
 
 	read_lock(&reset_fn_stats_rwl);
-	spin_lock(&global_tree.lock);
+	spin_lock(&tree->lock);
 
-	f = find_fn_in_tree(&global_tree.root, fn_name);
+	f = find_fn_in_tree(tree, fn_name);
 	if(f) {
 		f->nr_calls++;
 		f->time_spent += duration;
 	}	
 
-	spin_unlock(&global_tree.lock);
+	spin_unlock(&tree->lock);
 
 	read_unlock(&reset_fn_stats_rwl);
 }
 
-void fn_tree_print(struct fn_stats_tree_t* tree) {
+static int cmp_time (const void * a, const void * b) {
+   struct fn_stats_t * fn_a = (struct fn_stats_t *) a;
+   struct fn_stats_t * fn_b = (struct fn_stats_t *) b;
+
+   // We cannot simply return ( fn_b->time_spent - fn_a->time_spent )
+	// because these are 64 bit integers and we return an 'int' so there might be overflows
+	if(fn_a->time_spent > fn_b->time_spent) {
+		return -1;
+	}
+	
+	if(fn_a->time_spent < fn_b->time_spent) {
+		return 1;
+	}
+
+	return 0;
+}
+
+static void sort_times(struct fn_stats_tree_t* tree) {
+   sort(tree->fn_entries, tree->index, sizeof(struct fn_stats_t), cmp_time, NULL); 
+}
+
+void fn_tree_print(struct seq_file *m, struct fn_stats_tree_t* tree, unsigned long duration) {
 	int i;
-	for(i = 0; i < tree->index; i++) {
-		printk("%s -- nr calls %lu -- time spent %lu\n", tree->fn_entries[i].name, tree->fn_entries[i].nr_calls, tree->fn_entries[i].time_spent);
+	for(i = 0; i < tree->index; i++){
+		int ratio = duration ? (tree->fn_entries[i].time_spent * 100 / (duration * num_online_cpus())): 0;
+		seq_printf(m, "%*s -- nr calls %20lu -- time spent %20lu -- %2d %%\n", MAX_FN_NAME_LENGTH, tree->fn_entries[i].name, tree->fn_entries[i].nr_calls, tree->fn_entries[i].time_spent, ratio);
 	}
 }
 
-void fn_tree_init(struct fn_stats_tree_t* tree) {
+void __fn_tree_init(struct fn_stats_tree_t* tree) {
+	memset(tree, 0, sizeof(struct fn_stats_tree_t));
+	tree->root = RB_ROOT;
+	spin_lock_init(&tree->lock);
+}
+
+void fn_tree_init(void) {
+	int cpu;
 	write_lock(&reset_fn_stats_rwl);
 
-	memset(&global_tree, 0, sizeof(global_tree));
-   global_tree.root = RB_ROOT;
-	spin_lock_init(&global_tree.lock);
+	for_each_online_cpu(cpu) {
+		struct fn_stats_tree_t* tree = per_cpu_ptr(&fn_stats_tree_per_cpu, cpu);
+
+		__fn_tree_init(tree);
+	}
 
 	write_unlock(&reset_fn_stats_rwl);
 }
@@ -115,16 +174,12 @@ PROCFS Functions
 We create here entries in the proc system that will allows us to configure replication and gather stats :)
 That's not very clean, we should use sysfs instead [TODO]
 **/
-static u64 last_rdt = 0;
+static u64 last_rdt_lock_contention = 0;
 // Do not use something else than unsigned long !
 struct time_profiling_t {
    unsigned long timelock;
    unsigned long timewlock;
    unsigned long timespinlock;
-   unsigned long timemmap;
-   unsigned long timemunmap;
-   unsigned long timebrk;
-   unsigned long timemprotect;
    unsigned long timepgflt;
 };
 
@@ -145,13 +200,6 @@ static void _get_merged_lock_time(struct time_profiling_t* merged) {
       merged->timewlock += (stats->time_spent_acquiring_writelocks);
       merged->timespinlock += (stats->time_spent_spinlocks);
 
-#if ENABLE_MM_LOCK_STATS
-      merged->timemmap += (stats->time_spent_mmap_lock);
-      merged->timebrk += (stats->time_spent_brk_lock);
-      merged->timemunmap += (stats->time_spent_munmap_lock);
-      merged->timemprotect += (stats->time_spent_mprotect_lock);
-#endif
-
       if(merged->timepgflt < stats->time_spent_in_pgfault_handler) {
          merged->timepgflt = (stats->time_spent_in_pgfault_handler);
       }
@@ -167,13 +215,13 @@ static int get_lock_contention(struct seq_file *m, void* v)
    unsigned long div;
    int i;
 
-   if(!last_rdt) {
+   if(!last_rdt_lock_contention) {
       seq_printf(m, "You must write to the file first !\n");
       return 0;
    } 
 
    rdtscll(rdt);
-   rdt -= last_rdt;
+   rdt -= last_rdt_lock_contention;
 
    _get_merged_lock_time(&current_time_prof_acc);
 
@@ -197,21 +245,20 @@ static int get_lock_contention(struct seq_file *m, void* v)
       }
       write_unlock(&carrefour_hook_stats_lock);
 
-      seq_printf(m, "%lu %lu %lu %lu %lu %lu %lu %llu\n",
+      seq_printf(m, "%lu %lu %d %d %d %d %lu %llu\n",
             (current_time_prof.timelock * 100) / div, (current_time_prof.timespinlock * 100) / div,
-            (current_time_prof.timemmap * 100) / current_time_prof.timewlock, (current_time_prof.timebrk * 100) / current_time_prof.timewlock, 
-            (current_time_prof.timemunmap * 100) / current_time_prof.timewlock, (current_time_prof.timemprotect * 100) / current_time_prof.timewlock,
+            0, 0, 0, 0, // We keep it for compatibility reasons 
             (current_time_prof.timepgflt * 100) / rdt,
             (total_migr * 100) / div
          );
    }
 
-   rdtscll(last_rdt);
+   rdtscll(last_rdt_lock_contention);
    return 0;
 }
 
 static void _lock_contention_reset(void) {
-   rdtscll(last_rdt);
+   rdtscll(last_rdt_lock_contention);
    _get_merged_lock_time(&last_time_prof);
 }
 
@@ -250,15 +297,23 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
    unsigned long nr_migrations = 0;
 	int j;
 #endif
-#if ENABLE_MM_LOCK_STATS
-   unsigned long max_time_mmap = 0;
-   unsigned long max_time_munmap = 0;
-   unsigned long avg1 = 0, avg2 = 0;
-#endif
 #if ENABLE_TSK_MIGRATION_STATS
 	unsigned long total_nr_task_migrations = 0;
 	int ratio = 0;
 #endif
+	unsigned long rdt = 0;
+	struct fn_stats_tree_t* dest_fn_stats_tree; 
+
+	if(last_rdt_carrefour_stats) {
+		rdtscll(rdt);
+		rdt -= last_rdt_carrefour_stats;
+	}
+
+	dest_fn_stats_tree = kmalloc(sizeof(struct fn_stats_tree_t), GFP_KERNEL);
+	if(!dest_fn_stats_tree) {
+		printk(KERN_CRIT "No more memory ?\n");
+		BUG_ON(1);
+	}
 
    seq_printf(m, "#Number of online cpus: %d\n", num_online_cpus());
    seq_printf(m, "#Number of online nodes: %d\n", num_online_nodes());
@@ -279,11 +334,6 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
       tsk_migrations_stats_t* tsk_stats = per_cpu_ptr(&tsk_migrations_stats_per_core, cpu);
 #endif
 
-#if ENABLE_MM_LOCK_STATS
-      unsigned long time_mmap_sum = 0;
-      unsigned long time_munmap_sum = 0;
-#endif
-
       uint64_t* stats_p = (uint64_t*) stats;
 
       // Automatic merging of everything
@@ -296,21 +346,6 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
          if(&stats_p[i] == &stats->max_nr_migrations_per_4k_page) {
             // We don't want to automerge this one
             continue;
-         }
-#endif
-
-#if ENABLE_MM_LOCK_STATS
-			if(&stats_p[i] == &stats->time_spent_mmap_lock) {
-            time_mmap_sum += stats_p[i];
-         }
-         else if(&stats_p[i] == &stats->time_spent_mmap_crit_sec) {
-            time_mmap_sum += stats_p[i];
-         }
-         else if(&stats_p[i] == &stats->time_spent_munmap_lock) {
-            time_munmap_sum += stats_p[i];
-         }
-         else if(&stats_p[i] == &stats->time_spent_munmap_crit_sec) {
-            time_munmap_sum += stats_p[i];
          }
 #endif
 
@@ -333,16 +368,6 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
 #if ENABLE_MIGRATION_STATS
       if(stats->max_nr_migrations_per_4k_page > global_stats->max_nr_migrations_per_4k_page) {
          global_stats->max_nr_migrations_per_4k_page = stats->max_nr_migrations_per_4k_page;
-      }
-#endif
-
-#if ENABLE_MM_LOCK_STATS 
-      if(time_mmap_sum > max_time_mmap) {
-         max_time_mmap = time_mmap_sum;
-      }
-
-      if(time_munmap_sum > max_time_munmap) {
-         max_time_munmap = time_munmap_sum;
       }
 #endif
    }
@@ -376,39 +401,6 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
    seq_printf(m, "[GLOBAL] Time spent acquiring locks (global): %lu cycles\n\n", time_lock);
    
    seq_printf(m, "[GLOBAL] Time spent acquiring spinlocks (total, global): %lu cycles\n", (unsigned long) global_stats->time_spent_spinlocks);
-
-#if ENABLE_MM_LOCK_STATS
-   if(global_stats->nr_mmap) {
-      avg1 = global_stats->time_spent_mmap_lock / global_stats->nr_mmap;
-      avg2 = global_stats->time_spent_mmap_crit_sec / global_stats->nr_mmap;
-   }
-   seq_printf(m, "[GLOBAL] Time spent in mmap (lock, crit. section): %lu cycles, %lu cycles (%lu cycles, %lu cycles, %lu cycles)\n",
-      avg1, avg2, (unsigned long) global_stats->time_spent_mmap_lock, (unsigned long) global_stats->time_spent_mmap_crit_sec, max_time_mmap);
-
-   avg1 = avg2 = 0;
-   if(global_stats->nr_munmap) {
-      avg1 = global_stats->time_spent_munmap_lock / global_stats->nr_munmap;
-      avg2 = global_stats->time_spent_munmap_crit_sec / global_stats->nr_munmap;
-   }
-   seq_printf(m, "[GLOBAL] Time spent in munmap (lock, crit. section): %lu cycles, %lu cycles (%lu cycles, %lu cycles, %lu cycles)\n",
-      avg1, avg2, (unsigned long) global_stats->time_spent_munmap_lock, (unsigned long) global_stats->time_spent_munmap_crit_sec, max_time_munmap);
-
-   avg1 = avg2 = 0;
-   if(global_stats->nr_mprotect) {
-      avg1 = global_stats->time_spent_mprotect_lock / global_stats->nr_mprotect;
-      //avg2 = global_stats->time_spent_mprotect_crit_sec / global_stats->nr_mprotect;
-   }
-   seq_printf(m, "[GLOBAL] Time spent in mprotect (lock, crit. section): %lu cycles, %lu cycles (%lu cycles, %lu cycles, %lu cycles)\n",
-      avg1, avg2, (unsigned long) global_stats->time_spent_mprotect_lock, (unsigned long) 0, (unsigned long) 0);
-
-   avg1 = avg2 = 0;
-   if(global_stats->nr_brk) {
-      avg1 = global_stats->time_spent_brk_lock / global_stats->nr_brk;
-      //avg2 = global_stats->time_spent_brk_crit_sec / global_stats->nr_brk;
-   }
-   seq_printf(m, "[GLOBAL] Time spent in brk (lock, crit. section): %lu cycles, %lu cycles (%lu cycles, %lu cycles, %lu cycles)\n",
-      avg1, avg2, (unsigned long) global_stats->time_spent_brk_lock, (unsigned long) 0, (unsigned long) 0);
-#endif
 
    seq_printf(m, "[GLOBAL] Number of page faults: %lu\n", (unsigned long) global_stats->nr_pgfault);
    seq_printf(m, "[GLOBAL] Time spent in the page fault handler: %lu cycles\n\n", time_pgfault);
@@ -467,11 +459,26 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
    seq_printf(m, "[GLOBAL] Number of task migrations due to others: %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_others, ratio);
 
 	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_in_mm_lock * 100 / total_nr_task_migrations : 0; 
-   seq_printf(m, "[GLOBAL] Number of task migrations while mmap/munmap in mm lock: %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_in_mm_lock, ratio);
+   seq_printf(m, "[GLOBAL] Number of task migrations while mmap/munmap in mm lock: %lu (%d %%)\n\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_in_mm_lock, ratio);
 #endif
 
-	fn_tree_print(&global_tree);
+   seq_printf(m, "[GLOBAL] Estimated number of cycles: %lu\n\n", (unsigned long) rdt);
 
+	//
+	__fn_tree_init(dest_fn_stats_tree);
+
+	write_lock(&reset_fn_stats_rwl);
+	for_each_online_cpu(cpu) {
+		struct fn_stats_tree_t* tree = per_cpu_ptr(&fn_stats_tree_per_cpu, cpu);
+		merge_fn_arrays(dest_fn_stats_tree, tree);
+	}
+	write_unlock(&reset_fn_stats_rwl);
+
+	sort_times(dest_fn_stats_tree);
+	fn_tree_print(m, dest_fn_stats_tree, rdt);
+	//
+
+	kfree(dest_fn_stats_tree);
    kfree(global_stats);
 	kfree(global_tsk_stats);
 
@@ -498,9 +505,11 @@ static ssize_t carrefour_stats_write(struct file *file, const char __user *buf, 
 
    write_unlock(&reset_stats_rwl);
 
-	fn_tree_init(&global_tree);
+	fn_tree_init();
 
    _lock_contention_reset();
+
+	rdtscll(last_rdt_carrefour_stats);
    return count;
 }
 
@@ -526,7 +535,7 @@ static int __init carrefour_stats_init(void)
       memset(stats, 0, sizeof(replication_stats_t));
    }
 
-	fn_tree_init(&global_tree);
+	fn_tree_init();
 
    if(!proc_create(PROCFS_CARREFOUR_STATS_FN, S_IRUGO, NULL, &carrefour_stats_handlers)){
       printk(KERN_ERR "Cannot create /proc/%s\n", PROCFS_CARREFOUR_STATS_FN);

@@ -14,12 +14,16 @@
 
 // FGAUD
 #include <linux/carrefour-stats.h>
+#include <linux/kallsyms.h>
 
 /*
  * lock for reading
  */
 void __sched down_read(struct rw_semaphore *sem)
 {
+#if ENABLE_RWLOCK_STATS
+	char caller_name[KSYM_NAME_LEN];
+#endif
    RECORD_DURATION_START;
 
 	might_sleep();
@@ -30,6 +34,15 @@ void __sched down_read(struct rw_semaphore *sem)
 
    DEBUG_SEM_LOCKS(1, 0);
    RECORD_DURATION_END(time_spent_acquiring_readlocks, nr_readlock_taken);
+
+#if ENABLE_RWLOCK_STATS
+	if(likely(kallsyms_lookup((unsigned long) __builtin_return_address(0), NULL, NULL, NULL, caller_name))) {
+		record_fn_call(caller_name,"-rdlock", (rdt_stop - rdt_start));
+	}
+	else {
+		record_fn_call("UNKNOWN",NULL, (rdt_stop - rdt_start));
+	}
+#endif
 }
 
 EXPORT_SYMBOL(down_read);
@@ -58,8 +71,13 @@ EXPORT_SYMBOL(down_read_trylock);
 /*
  * lock for writing
  */
-unsigned long __sched down_write(struct rw_semaphore *sem)
+
+void __sched down_write(struct rw_semaphore *sem)
 {
+#if ENABLE_RWLOCK_STATS
+	char caller_name[KSYM_NAME_LEN];
+#endif
+
    RECORD_DURATION_START;
 
 	might_sleep();
@@ -72,11 +90,14 @@ unsigned long __sched down_write(struct rw_semaphore *sem)
    DEBUG_SEM_LOCKS(1, 1);
    RECORD_DURATION_END(time_spent_acquiring_writelocks, nr_writelock_taken);
 
-   /*if((rdt_stop - rdt_start) > 100000) {
-      printk("Acquiring writer lock %p (caller %p)\n", sem, __builtin_return_address(0));
-   }*/
-
-   return (rdt_stop - rdt_start);
+#if ENABLE_RWLOCK_STATS
+	if(likely(kallsyms_lookup((unsigned long) __builtin_return_address(0), NULL, NULL, NULL, caller_name))) {
+		record_fn_call(caller_name,"-wrlock", (rdt_stop - rdt_start));
+	}
+	else {
+		record_fn_call("UNKNOWN",NULL, (rdt_stop - rdt_start));
+	}
+#endif
 }
 
 EXPORT_SYMBOL(down_write);

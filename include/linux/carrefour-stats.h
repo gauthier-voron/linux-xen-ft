@@ -6,7 +6,8 @@
 #define ENABLE_GLOBAL_STATS            1
 #define ENABLE_MIGRATION_STATS         1
 #define ENABLE_TSK_MIGRATION_STATS     1
-#define ENABLE_MM_LOCK_STATS				1
+#define ENABLE_RWLOCK_STATS				1
+#define ENABLE_MM_FUN_STATS				1
 
 #define PROCFS_LOCK_FN "time_lock"
 #define PROCFS_CARREFOUR_STATS_FN  "carrefour_replication_stats"
@@ -34,21 +35,6 @@ typedef struct __attribute__((packed)) {
 
    uint64_t nr_pingpong;
    uint64_t nr_replicated_decisions_reverted;
-#endif
-
-#if ENABLE_MM_LOCK_STATS
-   uint64_t time_spent_mmap_lock;
-   uint64_t time_spent_brk_lock;
-   uint64_t time_spent_munmap_lock;
-   uint64_t time_spent_mprotect_lock;
-
-   uint64_t time_spent_mmap_crit_sec;
-   uint64_t time_spent_munmap_crit_sec;
-
-   uint64_t nr_mmap;
-   uint64_t nr_munmap;
-   uint64_t nr_brk;
-   uint64_t nr_mprotect;
 #endif
 
 #if ENABLE_MIGRATION_STATS
@@ -157,7 +143,7 @@ typedef int tsk_migrations_stats_t; // make sure that the name exists
 #define INCR_TSKMIGR_STAT_VALUE(e,v) do {} while (0)
 #endif
 
-void record_fn_call(const char* fn_name, unsigned long duration);
+void record_fn_call(const char* fn_name, const char * suffix, unsigned long duration);
 
 #if !ENABLE_GLOBAL_STATS && (ENABLE_MIGRATION_STATS || ENABLE_MM_LOCK_STATS || ENABLE_TSK_MIGRATION_STATS)
 #error "Cannot enable ENABLE_MIGRATION_STATS or ENABLE_MM_LOCK_STATS or ENABLE_TSK_MIGRATION_STATS without ENABLE_GLOBAL_STATS"
