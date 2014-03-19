@@ -1474,13 +1474,14 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 		p->sched_class->task_waking(p);
 
 	cpu = select_task_rq(p, SD_BALANCE_WAKE, wake_flags);
+
+	// FGAUD
+	if(p->is_in_rw_lock) {
+		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
+		//cpu = task_cpu(p);
+	}
 	if (task_cpu(p) != cpu) {
 		wake_flags |= WF_MIGRATED;
-
-		// FGAUD
-		if(p->is_in_rw_lock) {
-			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
-		}
 
 		// FGAUD
 		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_wakeup, 1);
@@ -4986,6 +4987,7 @@ static void migrate_tasks(unsigned int dead_cpu)
 
 		if(next->is_in_rw_lock) {
 			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
+			// We cannot avoid it because the cpu is "dead"
 		}
 
 		// FGAUD

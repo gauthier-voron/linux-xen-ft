@@ -44,9 +44,11 @@ void __sched down_read(struct rw_semaphore *sem)
 	}
 #endif
 
+#if ENABLE_TSK_MIGRATION_STATS 
 	if(current) {
 		current->is_in_rw_lock++;
 	}
+#endif
 }
 
 EXPORT_SYMBOL(down_read);
@@ -66,9 +68,11 @@ int down_read_trylock(struct rw_semaphore *sem)
       DEBUG_SEM_LOCKS(1, 0);
       RECORD_DURATION_END(time_spent_acquiring_readlocks, nr_readlock_taken);
 
+#if ENABLE_TSK_MIGRATION_STATS 
 		if(current) {
 			current->is_in_rw_lock++;
 		}
+#endif
    }
 
 	return ret;
@@ -107,9 +111,11 @@ void __sched down_write(struct rw_semaphore *sem)
 	}
 #endif
 
+#if ENABLE_TSK_MIGRATION_STATS 
 	if(current) {
 		current->is_in_rw_lock++;
 	}
+#endif
 }
 
 EXPORT_SYMBOL(down_write);
@@ -130,9 +136,11 @@ int down_write_trylock(struct rw_semaphore *sem)
       DEBUG_SEM_LOCKS(1, 1);
       RECORD_DURATION_END(time_spent_acquiring_writelocks, nr_writelock_taken);
 
+#if ENABLE_TSK_MIGRATION_STATS 
 		if(current) {
 			current->is_in_rw_lock++;
 		}
+#endif
    }
 	return ret;
 }
@@ -149,9 +157,11 @@ void up_read(struct rw_semaphore *sem)
    
    DEBUG_SEM_LOCKS(2, 0);
 
+#if ENABLE_TSK_MIGRATION_STATS 
 	if(current) {
 		current->is_in_rw_lock--;
 	}
+#endif
 }
 
 EXPORT_SYMBOL(up_read);
@@ -166,9 +176,11 @@ void up_write(struct rw_semaphore *sem)
 
    DEBUG_SEM_LOCKS(2, 1);
 
+#if ENABLE_TSK_MIGRATION_STATS 
 	if(current) {
 		current->is_in_rw_lock--;
 	}
+#endif
 }
 
 EXPORT_SYMBOL(up_write);
