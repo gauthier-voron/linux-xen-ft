@@ -1597,7 +1597,7 @@ struct task_struct {
 #endif
 
    // Test
-   int is_in_mm_lock;
+   int is_in_rw_lock;
 
    // Pinthreads
    int pinthread_done;

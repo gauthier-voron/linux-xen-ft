@@ -3319,17 +3319,11 @@ select_task_rq_fair(struct task_struct *p, int sd_flag, int wake_flags)
 	if (p->nr_cpus_allowed == 1)
 		return prev_cpu;
 
-	// FGAUD
-	if(p->is_in_mm_lock) {
-		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_mm_lock, 1);
-	}
-
 	if (sd_flag & SD_BALANCE_WAKE) {
 		if (cpumask_test_cpu(cpu, tsk_cpus_allowed(p)))
 			want_affine = 1;
 
 		new_cpu = prev_cpu;
-
 		//return prev_cpu;
 	}
 
@@ -3966,8 +3960,8 @@ static int move_one_task(struct lb_env *env)
 			continue;
 
 		// FGAUD
-		if(p->is_in_mm_lock) {
-			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_mm_lock, 1);
+		if(p->is_in_rw_lock) {
+			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
 			//continue;
 		}
 
@@ -4019,12 +4013,6 @@ static int move_tasks(struct lb_env *env)
 			break;
 		}
 
-		// FGAUD
-		if(p->is_in_mm_lock) {
-			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_mm_lock, 1);
-			//goto next;
-		}
-
 		if (throttled_lb_pair(task_group(p), env->src_cpu, env->dst_cpu))
 			goto next;
 
@@ -4038,6 +4026,12 @@ static int move_tasks(struct lb_env *env)
 
 		if (!can_migrate_task(p, env))
 			goto next;
+
+		// FGAUD
+		if(p->is_in_rw_lock) {
+			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
+			//goto next;
+		}
 
 		move_task(p, env);
 		pulled++;

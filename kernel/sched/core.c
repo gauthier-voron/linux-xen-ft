@@ -1478,6 +1478,11 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 		wake_flags |= WF_MIGRATED;
 
 		// FGAUD
+		if(p->is_in_rw_lock) {
+			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
+		}
+
+		// FGAUD
 		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_wakeup, 1);
 
 		set_task_cpu(p, cpu);
@@ -2622,9 +2627,9 @@ void sched_exec(void)
 		struct migration_arg arg = { p, dest_cpu };
 
 		// FGAUD
-		if(p->is_in_mm_lock) {
-			//return ret;
-			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_mm_lock, 1);
+		if(p->is_in_rw_lock) {
+			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
+			//goto unlock;
 		}
 
 		// FGAUD
@@ -4820,9 +4825,9 @@ int set_cpus_allowed_ptr(struct task_struct *p, const struct cpumask *new_mask)
 		task_rq_unlock(rq, p, &flags);
 
 		// FGAUD
-		if(p->is_in_mm_lock) {
-			//return ret;
-			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_mm_lock, 1);
+		if(p->is_in_rw_lock) {
+			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
+			//return 0;
 		}
 
 		// FGAUD
@@ -4978,6 +4983,10 @@ static void migrate_tasks(unsigned int dead_cpu)
 		/* Find suitable destination for @next, with force if needed. */
 		dest_cpu = select_fallback_rq(dead_cpu, next);
 		raw_spin_unlock(&rq->lock);
+
+		if(next->is_in_rw_lock) {
+			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
+		}
 
 		// FGAUD
 		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_others, 1);

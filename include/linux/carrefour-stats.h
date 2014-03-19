@@ -123,7 +123,7 @@ typedef struct __attribute__((packed)) {
 
    uint64_t nr_tsk_migrations_others;
 
-   uint64_t nr_tsk_migrations_in_mm_lock;
+   uint64_t nr_tsk_migrations_in_rw_lock;
 } tsk_migrations_stats_t;
 
 DECLARE_PER_CPU(tsk_migrations_stats_t, tsk_migrations_stats_per_core);

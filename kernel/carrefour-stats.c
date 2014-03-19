@@ -368,7 +368,7 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
       for(i = 0; i < sizeof(tsk_migrations_stats_t) / sizeof(uint64_t); i++) {
          ((uint64_t *) global_tsk_stats)[i] += stats_p[i];
 
-			if(&stats_p[i] != &tsk_stats->nr_tsk_migrations_in_mm_lock) {
+			if(&stats_p[i] != &tsk_stats->nr_tsk_migrations_in_rw_lock) {
 				total_nr_task_migrations += stats_p[i];
 			}
       }
@@ -467,8 +467,8 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
 	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_others * 100 / total_nr_task_migrations : 0; 
    seq_printf(m, "[GLOBAL] Number of task migrations due to others: %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_others, ratio);
 
-	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_in_mm_lock * 100 / total_nr_task_migrations : 0; 
-   seq_printf(m, "[GLOBAL] Number of task migrations while mmap/munmap in mm lock: %lu (%d %%)\n\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_in_mm_lock, ratio);
+	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_in_rw_lock * 100 / total_nr_task_migrations : 0; 
+   seq_printf(m, "[GLOBAL] Number of task migrations while task holding a rw lock: %lu (%d %%)\n\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_in_rw_lock, ratio);
 #endif
 
    seq_printf(m, "[GLOBAL] Estimated number of cycles: %lu\n\n", (unsigned long) rdt);

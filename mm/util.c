@@ -370,14 +370,10 @@ unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
 
 		down_write(&mm->mmap_sem);
 
-		current->is_in_mm_lock = 1;
-
 		ret = do_mmap_pgoff(file, addr, len, prot, flag, pgoff,
 				    &populate);
 
 		up_write(&mm->mmap_sem);
-
-		current->is_in_mm_lock = 0;
 
 		if (populate)
 			mm_populate(ret, populate);

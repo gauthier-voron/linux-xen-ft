@@ -2549,12 +2549,8 @@ int vm_munmap(unsigned long start, size_t len)
 
 	down_write(&mm->mmap_sem);
 
-	current->is_in_mm_lock = 1;
-
 	ret = do_munmap(mm, start, len);
 	up_write(&mm->mmap_sem);
-
-	current->is_in_mm_lock = 0;
 
 #if ENABLE_MM_FUN_STATS
 	rdtscll(rdt_stop);
