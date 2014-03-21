@@ -6,8 +6,8 @@
 #define ENABLE_GLOBAL_STATS            1
 #define ENABLE_MIGRATION_STATS         1
 #define ENABLE_TSK_MIGRATION_STATS     1
-#define ENABLE_RWLOCK_STATS				1
-#define ENABLE_MM_FUN_STATS				1
+#define ENABLE_RWLOCK_STATS				0
+#define ENABLE_MM_FUN_STATS				0
 
 #define PROCFS_LOCK_FN "time_lock"
 #define PROCFS_CARREFOUR_STATS_FN  "carrefour_replication_stats"
