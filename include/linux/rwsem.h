@@ -23,6 +23,10 @@ struct rw_semaphore;
 #ifdef CONFIG_RWSEM_GENERIC_SPINLOCK
 #include <linux/rwsem-spinlock.h> /* use a generic implementation */
 #else
+
+#define ENABLE_RWSEM_ORDER_HACK	0
+#define NR_READ_LOCK_SIZE			10000
+
 /* All arch specific implementations share the same struct */
 struct rw_semaphore {
 	long			count;
@@ -34,6 +38,11 @@ struct rw_semaphore {
 
 #if WITH_DEBUG_LOCKS
    void* owner;
+#endif
+
+#if ENABLE_RWSEM_ORDER_HACK
+	unsigned* nr_read_locks;
+	unsigned  nr_read_locks_index;
 #endif
 };
 
@@ -61,11 +70,26 @@ static inline int rwsem_is_locked(struct rw_semaphore *sem)
 # define __RWSEM_DEP_MAP_INIT(lockname)
 #endif
 
+#if WITH_DEBUG_LOCKS
+#define INIT_OWNER , .owner = NULL
+#else
+#define INIT_OWNER
+#endif
+
+#if ENABLE_RWSEM_ORDER_HACK
+#define INIT_NR_READ_LOCKS	, .nr_read_locks = NULL, .nr_read_locks_index = 0
+#else
+#define INIT_NR_READ_LOCKS
+#endif
+
 #define __RWSEM_INITIALIZER(name)			\
 	{ RWSEM_UNLOCKED_VALUE,				\
 	  __RAW_SPIN_LOCK_UNLOCKED(name.wait_lock),	\
 	  LIST_HEAD_INIT((name).wait_list)		\
-	  __RWSEM_DEP_MAP_INIT(name) }
+	  __RWSEM_DEP_MAP_INIT(name) \
+	  INIT_OWNER \
+	  INIT_NR_READ_LOCKS \
+	}
 
 #define DECLARE_RWSEM(name) \
 	struct rw_semaphore name = __RWSEM_INITIALIZER(name)

@@ -705,6 +705,11 @@ static void check_stack_usage(void)
 static inline void check_stack_usage(void) {}
 #endif
 
+#if ENABLE_RWSEM_ORDER_HACK
+// FGAUD
+DEFINE_SPINLOCK(print_lock);
+#endif
+
 void do_exit(long code)
 {
 	struct task_struct *tsk = current;
@@ -784,6 +789,29 @@ void do_exit(long code)
 
 	tsk->exit_code = code;
 	taskstats_exit(tsk, group_dead);
+
+#if ENABLE_RWSEM_ORDER_HACK
+	// FGAUD
+	if(tsk->mm) {
+		unsigned * nr_read_locks = tsk->mm->mmap_sem.nr_read_locks;
+		if(nr_read_locks && (tsk->pid == tsk->tgid)) {
+			int i;
+
+			spin_lock(&print_lock);
+			printk("%d -->", tsk->pid); 
+			for(i = 0; i < tsk->mm->mmap_sem.nr_read_locks_index; i++) {
+				printk(" %u", nr_read_locks[i]);
+			}
+			printk("\n");
+
+			vfree(nr_read_locks);
+			tsk->mm->mmap_sem.nr_read_locks = NULL;
+			tsk->mm->mmap_sem.nr_read_locks_index = 0;
+
+			spin_unlock(&print_lock);
+		}
+	}
+#endif
 
 	exit_mm(tsk);
 

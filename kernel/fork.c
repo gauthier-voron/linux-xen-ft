@@ -1638,6 +1638,22 @@ long do_fork(unsigned long clone_flags,
       if(pinthread_callback) {
          pinthread_callback(p, CLONE);
       }
+
+#if ENABLE_RWSEM_ORDER_HACK
+		{
+			char comm[TASK_COMM_LEN]; //FGAUD
+			get_task_comm(comm, p);
+			if(strnstr(comm, "oracle_", TASK_COMM_LEN)) {
+				if(p->mm && !p->mm->mmap_sem.nr_read_locks) {
+					p->mm->mmap_sem.nr_read_locks = vzalloc(sizeof(unsigned) * NR_READ_LOCK_SIZE); 
+					p->mm->mmap_sem.nr_read_locks_index = 0; 
+					if(!p->mm->mmap_sem.nr_read_locks) {
+						printk(KERN_CRIT "No more memory (%s, %s, %d) ??\n", __FILE__, __FUNCTION__, __LINE__);
+					}
+				}
+			}
+		}
+#endif
       /****/
 
 		wake_up_new_task(p);

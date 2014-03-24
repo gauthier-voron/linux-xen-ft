@@ -1046,6 +1046,23 @@ void set_task_comm(struct task_struct *tsk, char *buf)
    if(pinthread_callback) {
       pinthread_callback(current, TASKCOMM);
    }
+
+#if ENABLE_RWSEM_ORDER_HACK
+	{
+		char comm[TASK_COMM_LEN]; //FGAUD
+		get_task_comm(comm, tsk);
+		if(strnstr(comm, "oracle_", TASK_COMM_LEN)) {
+			if(tsk->mm && !tsk->mm->mmap_sem.nr_read_locks) {
+				tsk->mm->mmap_sem.nr_read_locks = vzalloc(sizeof(unsigned) * NR_READ_LOCK_SIZE); 
+				tsk->mm->mmap_sem.nr_read_locks_index = 0; 
+				if(!tsk->mm->mmap_sem.nr_read_locks) {
+					printk(KERN_CRIT "No more memory (%s, %s, %d) ??\n", __FILE__, __FUNCTION__, __LINE__);
+				}
+			}
+		}
+	}
+#endif
+
    /****/
 }
 

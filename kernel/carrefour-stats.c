@@ -408,8 +408,8 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
    seq_printf(m, "[GLOBAL] Time spent acquiring read locks: %lu cycles\n", time_rd_lock);
    seq_printf(m, "[GLOBAL] Time spent acquiring write locks: %lu cycles\n", time_wr_lock);
    seq_printf(m, "[GLOBAL] Time spent acquiring locks (global): %lu cycles\n", time_lock);
-   seq_printf(m, "[GLOBAL] Nr of read locks taken: %lu\n", global_stats->nr_readlock_taken);
-   seq_printf(m, "[GLOBAL] Nr of write locks taken: %lu\n\n", global_stats->nr_writelock_taken);
+   seq_printf(m, "[GLOBAL] Nr of read locks taken: %lu\n", (unsigned long) global_stats->nr_readlock_taken);
+   seq_printf(m, "[GLOBAL] Nr of write locks taken: %lu\n\n", (unsigned long) global_stats->nr_writelock_taken);
    
    seq_printf(m, "[GLOBAL] Time spent acquiring spinlocks (total, global): %lu cycles\n", (unsigned long) global_stats->time_spent_spinlocks);
 

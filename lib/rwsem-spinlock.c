@@ -46,6 +46,11 @@ void __init_rwsem(struct rw_semaphore *sem, const char *name,
 	sem->activity = 0;
 	raw_spin_lock_init(&sem->wait_lock);
 	INIT_LIST_HEAD(&sem->wait_list);
+
+	// TODO
+#error TODO
+	//sem->nr_read_locks = NULL;
+	//sem->nr_read_locks_index = 0;
 }
 EXPORT_SYMBOL(__init_rwsem);
 
