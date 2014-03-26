@@ -3,11 +3,12 @@
 
 #include <linux/percpu.h>
 
-#define ENABLE_GLOBAL_STATS            1
-#define ENABLE_MIGRATION_STATS         1
-#define ENABLE_TSK_MIGRATION_STATS     1
-#define ENABLE_RWLOCK_STATS				0
-#define ENABLE_MM_FUN_STATS				0
+#define ENABLE_GLOBAL_STATS					1
+#define ENABLE_MIGRATION_STATS				1
+#define ENABLE_TSK_MIGRATION_STATS			1
+#define ENABLE_TSK_MIGRATION_TIME_STATS	0 // WARNING: Should be checked -- especially for locking...
+#define ENABLE_RWLOCK_STATS					0
+#define ENABLE_MM_FUN_STATS					0
 
 #define PROCFS_LOCK_FN "time_lock"
 #define PROCFS_CARREFOUR_STATS_FN  "carrefour_replication_stats"
@@ -144,6 +145,7 @@ typedef int tsk_migrations_stats_t; // make sure that the name exists
 #endif
 
 void record_fn_call(const char* fn_name, const char * suffix, unsigned long duration);
+void record_fn_call_no_lock(const char* fn_name, const char * suffix, unsigned long duration); // WARNING: not thread safe! Make sure that preemption cannot happen!
 
 #if !ENABLE_GLOBAL_STATS && (ENABLE_MIGRATION_STATS || ENABLE_MM_LOCK_STATS || ENABLE_TSK_MIGRATION_STATS)
 #error "Cannot enable ENABLE_MIGRATION_STATS or ENABLE_MM_LOCK_STATS or ENABLE_TSK_MIGRATION_STATS without ENABLE_GLOBAL_STATS"

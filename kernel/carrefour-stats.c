@@ -102,19 +102,25 @@ void merge_fn_arrays(struct fn_stats_tree_t* dest, struct fn_stats_tree_t* src) 
 	}
 }
 
-void record_fn_call(const char* fn_name, const char* suffix, unsigned long duration) {
+static void __record_fn_call(const char* fn_name, const char* suffix, unsigned long duration, int no_lock) {
 	struct fn_stats_t* f;
 	struct fn_stats_tree_t* tree = per_cpu_ptr(&fn_stats_tree_per_cpu, smp_processor_id());
 
 	char name[MAX_FN_NAME_LENGTH];
+
+	if(!start_carrefour_profiling) {
+		return;
+	}
 
 	if(suffix) {
 		snprintf(name, MAX_FN_NAME_LENGTH, "%s%s", fn_name, suffix);
 		fn_name = name;
 	}
 
-	read_lock(&reset_fn_stats_rwl);
-	spin_lock(&tree->lock);
+	if(!no_lock) {
+		read_lock(&reset_fn_stats_rwl);
+		spin_lock_irq(&tree->lock);
+	}
 
 	f = find_fn_in_tree(tree, fn_name);
 	if(f) {
@@ -122,9 +128,18 @@ void record_fn_call(const char* fn_name, const char* suffix, unsigned long durat
 		f->time_spent += duration;
 	}	
 
-	spin_unlock(&tree->lock);
+	if(!no_lock) {
+		spin_unlock_irq(&tree->lock);
+		read_unlock(&reset_fn_stats_rwl);
+	}
+}
 
-	read_unlock(&reset_fn_stats_rwl);
+void record_fn_call(const char* fn_name, const char* suffix, unsigned long duration) {
+	__record_fn_call(fn_name, suffix, duration, 0);
+}
+
+void record_fn_call_no_lock(const char* fn_name, const char* suffix, unsigned long duration) {
+	__record_fn_call(fn_name, suffix, duration, 1);
 }
 
 static int cmp_time (const void * a, const void * b) {

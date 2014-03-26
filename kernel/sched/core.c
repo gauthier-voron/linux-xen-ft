@@ -1443,6 +1443,9 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 {
 	unsigned long flags;
 	int cpu, success = 0;
+#if ENABLE_TSK_MIGRATION_TIME_STATS
+	unsigned long rdt_start = 0, rdt_start2 = 0, rdt_stop = 0;
+#endif
 
 	smp_wmb();
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
@@ -1473,7 +1476,13 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 	if (p->sched_class->task_waking)
 		p->sched_class->task_waking(p);
 
+#if ENABLE_TSK_MIGRATION_TIME_STATS
+	rdtscll(rdt_start);
+#endif
 	cpu = select_task_rq(p, SD_BALANCE_WAKE, wake_flags);
+#if ENABLE_TSK_MIGRATION_TIME_STATS
+	rdtscll(rdt_start2);
+#endif
 
 	// FGAUD
 	if(p->is_in_rw_lock) {
@@ -1485,8 +1494,11 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 
 		// FGAUD
 		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_wakeup, 1);
-
 		set_task_cpu(p, cpu);
+
+#if ENABLE_TSK_MIGRATION_TIME_STATS
+		rdtscll(rdt_stop);
+#endif
 	}
 #endif /* CONFIG_SMP */
 
@@ -1496,6 +1508,12 @@ stat:
 out:
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
+#if ENABLE_TSK_MIGRATION_TIME_STATS
+	record_fn_call_nolock(__FUNCTION__, "-select_task_rq", (rdt_start2 - rdt_start));
+	if(rdt_stop) {
+		record_fn_call_nolock(__FUNCTION__, "-migration", (rdt_stop - rdt_start2));
+	}
+#endif
 	return success;
 }
 
@@ -4860,6 +4878,10 @@ static int __migrate_task(struct task_struct *p, int src_cpu, int dest_cpu)
 {
 	struct rq *rq_dest, *rq_src;
 	int ret = 0;
+#if ENABLE_TSK_MIGRATION_TIME_STATS
+	unsigned long rdt_start, rdt_stop;
+	rdtscll(rdt_start);
+#endif
 
 	if (unlikely(!cpu_active(dest_cpu)))
 		return ret;
@@ -4891,6 +4913,11 @@ done:
 fail:
 	double_rq_unlock(rq_src, rq_dest);
 	raw_spin_unlock(&p->pi_lock);
+
+#if ENABLE_TSK_MIGRATION_TIME_STATS
+	rdtscll(rdt_stop);
+	record_fn_call_nolock(__FUNCTION__, NULL, (rdt_stop - rdt_start));
+#endif
 	return ret;
 }
 

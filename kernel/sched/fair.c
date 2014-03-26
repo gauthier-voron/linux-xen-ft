@@ -5231,6 +5231,11 @@ void idle_balance(int this_cpu, struct rq *this_rq)
 	int pulled_task = 0;
 	unsigned long next_balance = jiffies + HZ;
 
+#if ENABLE_TSK_MIGRATION_TIME_STATS
+	unsigned long rdt_start, rdt_stop;
+	rdtscll(rdt_start);
+#endif
+
 	this_rq->idle_stamp = this_rq->clock;
 
 	if (this_rq->avg_idle < sysctl_sched_migration_cost)
@@ -5272,6 +5277,11 @@ void idle_balance(int this_cpu, struct rq *this_rq)
 	if(pulled_task) {
 		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_idle, pulled_task); 
 	}
+
+#if ENABLE_TSK_MIGRATION_TIME_STATS
+	rdtscll(rdt_stop);
+	record_fn_call_nolock(__FUNCTION__, NULL, (rdt_stop - rdt_start));
+#endif
 
 	raw_spin_lock(&this_rq->lock);
 
@@ -5339,12 +5349,8 @@ static int active_load_balance_cpu_stop(void *data)
 
 		schedstat_inc(sd, alb_count);
 
-		if (move_one_task(&env)) {
+		if (move_one_task(&env))
 			schedstat_inc(sd, alb_pushed);
-
-			// FGAUD
-			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_others, 1); 
-		}
 		else
 			schedstat_inc(sd, alb_failed);
 	}
@@ -5507,6 +5513,11 @@ static void rebalance_domains(int cpu, enum cpu_idle_type idle)
 	int update_next_balance = 0;
 	int need_serialize;
 
+#if ENABLE_TSK_MIGRATION_TIME_STATS
+	unsigned long rdt_start, rdt_stop;
+	rdtscll(rdt_start);
+#endif
+
 	update_blocked_averages(cpu);
 
 	rcu_read_lock();
@@ -5570,6 +5581,11 @@ out:
 	 */
 	if (likely(update_next_balance))
 		rq->next_balance = next_balance;
+
+#if ENABLE_TSK_MIGRATION_TIME_STATS
+	rdtscll(rdt_stop);
+	record_fn_call_nolock(__FUNCTION__, NULL, (rdt_stop - rdt_start));
+#endif
 }
 
 #ifdef CONFIG_NO_HZ
