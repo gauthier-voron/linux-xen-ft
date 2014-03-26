@@ -79,13 +79,13 @@ int down_read_trylock(struct rw_semaphore *sem)
 			current->is_in_rw_lock++;
 		}
 #endif
-   }
 
 #if ENABLE_RWSEM_ORDER_HACK
-	if(sem->nr_read_locks && sem->nr_read_locks_index < NR_READ_LOCK_SIZE) {
-		__sync_fetch_and_add(&sem->nr_read_locks[sem->nr_read_locks_index], 1);
-	}
+		if(sem->nr_read_locks && sem->nr_read_locks_index < NR_READ_LOCK_SIZE) {
+			__sync_fetch_and_add(&sem->nr_read_locks[sem->nr_read_locks_index], 1);
+		}
 #endif
+   }
 
 	return ret;
 }
