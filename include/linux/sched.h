@@ -1603,6 +1603,9 @@ struct task_struct {
    int pinthread_done;
    int pinthread_data;
    int pinthread_session_id;
+
+	// -- Use to store events
+	void * private_data;
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */

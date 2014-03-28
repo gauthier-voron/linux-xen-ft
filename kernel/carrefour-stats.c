@@ -10,6 +10,9 @@
 
 #include <linux/sort.h>
 
+#include <linux/perf_event.h>
+#include <linux/kthread.h>
+
 #if ENABLE_GLOBAL_STATS
 
 DEFINE_RWLOCK(reset_stats_rwl);
@@ -24,14 +27,27 @@ DEFINE_PER_CPU(tsk_migrations_stats_t, tsk_migrations_stats_per_core);
 
 #define MAX_FUNCTIONS		100
 #define MAX_FN_NAME_LENGTH 30
+#define MAX_NR_HWC			4
+
+enum stats_type {TIME, HWC};
 struct fn_stats_t {
 	struct rb_node node;
 
 	char name[MAX_FN_NAME_LENGTH];
-	unsigned long time_spent;
-	unsigned long nr_calls;
+	enum stats_type type;
 
-	unsigned long max_time_spent_per_core;
+	union {
+		struct {
+			unsigned long time_spent;
+			unsigned long nr_calls;
+			unsigned long max_time_spent_per_core;
+		};
+		struct {
+			unsigned long nr_calls;
+			unsigned long hwc_value[MAX_NR_HWC];
+			unsigned	nr_hwc;
+		};
+	};
 };
 
 struct fn_stats_tree_t {
@@ -43,6 +59,8 @@ struct fn_stats_tree_t {
 };
 
 DEFINE_PER_CPU(struct fn_stats_tree_t, fn_stats_tree_per_cpu);
+DEFINE_PER_CPU(struct fn_stats_tree_t, fn_hwc_stats_tree_per_cpu);
+
 DEFINE_RWLOCK(reset_fn_stats_rwl);
 
 struct fn_stats_t* find_fn_in_tree(struct fn_stats_tree_t* tree, const char* fn_name) {
@@ -89,11 +107,24 @@ void merge_fn_arrays(struct fn_stats_tree_t* dest, struct fn_stats_tree_t* src) 
 		f = find_fn_in_tree(dest, src->fn_entries[i].name);
 
 		if(f){
-			f->nr_calls += src->fn_entries[i].nr_calls;
-			f->time_spent += src->fn_entries[i].time_spent;
+			f->type = src->fn_entries[i].type;
 
-			if(src->fn_entries[i].time_spent > f->max_time_spent_per_core) {
-				f->max_time_spent_per_core = src->fn_entries[i].time_spent;
+			if(f->type == TIME) {
+				f->nr_calls += src->fn_entries[i].nr_calls;
+				f->time_spent += src->fn_entries[i].time_spent;
+
+				if(src->fn_entries[i].time_spent > f->max_time_spent_per_core) {
+					f->max_time_spent_per_core = src->fn_entries[i].time_spent;
+				}
+			}
+			else {
+				int j;
+				f->nr_hwc = src->fn_entries[i].nr_hwc;
+
+				f->nr_calls += src->fn_entries[i].nr_calls;
+				for (j = 0; j < src->fn_entries[i].nr_hwc; j++) {
+					f->hwc_value[j] += src->fn_entries[i].hwc_value[j];
+				}
 			}
 		}
 		else {
@@ -119,17 +150,18 @@ static void __record_fn_call(const char* fn_name, const char* suffix, unsigned l
 
 	if(!no_lock) {
 		read_lock(&reset_fn_stats_rwl);
-		spin_lock_irq(&tree->lock);
+		spin_lock(&tree->lock);
 	}
 
 	f = find_fn_in_tree(tree, fn_name);
 	if(f) {
+		f->type = TIME;
 		f->nr_calls++;
 		f->time_spent += duration;
-	}	
+	}
 
 	if(!no_lock) {
-		spin_unlock_irq(&tree->lock);
+		spin_unlock(&tree->lock);
 		read_unlock(&reset_fn_stats_rwl);
 	}
 }
@@ -140,6 +172,148 @@ void record_fn_call(const char* fn_name, const char* suffix, unsigned long durat
 
 void record_fn_call_no_lock(const char* fn_name, const char* suffix, unsigned long duration) {
 	__record_fn_call(fn_name, suffix, duration, 1);
+}
+
+static void record_fn_hwc(const char* fn_name, const char* suffix, int index, unsigned long value, unsigned nr_hwc) {
+	struct fn_stats_t* f;
+	struct fn_stats_tree_t* tree = get_cpu_ptr(&fn_hwc_stats_tree_per_cpu);
+	char name[MAX_FN_NAME_LENGTH];
+
+	if(!start_carrefour_profiling) {
+		goto exit;	
+	}
+
+	if(suffix) {
+		snprintf(name, MAX_FN_NAME_LENGTH, "%s%s", fn_name, suffix);
+		fn_name = name;
+	}
+
+	read_lock(&reset_fn_stats_rwl);
+
+	f = find_fn_in_tree(tree, fn_name);
+	if(f) {
+		f->type = HWC;
+		f->nr_hwc = nr_hwc;
+		f->nr_calls++;
+		f->hwc_value[index] += value;
+	}	
+
+	read_unlock(&reset_fn_stats_rwl);
+
+exit:
+	put_cpu_ptr(&fn_hwc_stats_tree_per_cpu);
+}
+
+
+//static unsigned long events_config[] = {0x00040ff41, 0x000400081, 0x00040FF7E, 0x40040f7E1}; // L1D misses, L1I misses, L2 misses, L3 misses 
+static unsigned long events_config[] = {0x00040ff41, 0x000400081, 0x00040FF7E, 0x40040f7E1}; // L1D misses, L1I misses, L2 misses, L3 misses 
+static unsigned long events_warned[] = {0};
+static void hwc_overflow_handler(struct perf_event *event, struct perf_sample_data *data, struct pt_regs *regs) {
+	printk("[BUG] Overflows not supported !!\n");
+	BUG();
+}
+
+static DEFINE_PER_CPU(struct task_struct *, softlockup_watchdog);
+static int watchdog_disabled = 0;
+static void watchdog_disable_all_cpus(void) {
+	unsigned int cpu;
+
+	if (!watchdog_disabled) {
+		for_each_online_cpu(cpu) {
+			struct task_struct *k = per_cpu(softlockup_watchdog, cpu);
+
+			if(k) {		
+				kthread_park(k);
+				watchdog_disabled = 1;
+			}
+			else {
+				watchdog_disabled = 0;
+				break;
+			}
+		}
+	}
+}
+
+void start_profiling_hwc(void) {
+	struct perf_event ** events = (struct perf_event **) current->private_data;
+	int i;
+	int nb_events = sizeof(events_config) / sizeof(events_config[0]);
+
+	if(!start_carrefour_profiling) {
+		return;
+	}
+
+	if(unlikely(nb_events > MAX_NR_HWC)) {
+		printk(KERN_CRIT "Big bug !\n");
+		return;
+	}
+
+	if(unlikely(events)) {
+		printk("BUG. Should have stopped previous recording first\n");
+		BUG();
+	}
+
+	events = kzalloc(sizeof(struct perf_event*) * nb_events, GFP_KERNEL);
+	if(!events) {
+		printk("[BUG] No more memory ?\n");
+		BUG();
+	}
+	current->private_data = (void*) events;
+
+	for(i = 0; i < nb_events; i++) {
+		struct perf_event_attr attr = {
+			.type           = PERF_TYPE_RAW,
+			.config         = events_config[i],
+			.size           = sizeof(struct perf_event_attr),
+			.exclude_kernel = 0,
+			.exclude_user   = 0,
+		};
+
+		events[i] = perf_event_create_kernel_counter(&attr, -1, current, hwc_overflow_handler, NULL);
+		if (IS_ERR(events[i])) {
+			if(!events_warned[i]) {
+				events_warned[i] = 1; // No need to use atomic ops. We don't care if it is printed a few times
+				printk(KERN_CRIT "BUG (ERR = %ld) -- index = %d\n", PTR_ERR(events[i]), i);
+			}
+			events[i] = NULL;
+			continue;
+		}
+
+		perf_event_enable(events[i]);
+	}
+}
+
+void stop_profiling(const char * fn_name, const char* suffix) {
+	struct perf_event ** events = (struct perf_event **) current->private_data;
+	int i;
+	int nb_events = sizeof(events_config) / sizeof(events_config[0]);
+
+	u64 value, enabled, running;
+
+	if(!start_carrefour_profiling) {
+		return;
+	}
+
+	if(unlikely(!events)) {
+		printk(KERN_CRIT "BUG. Should have started recording first\n");
+		BUG();
+	}
+
+	for(i = 0; i < nb_events; i++) {
+		if(!events[i]) {
+			// Initialization has failed
+			continue;
+		}
+
+		value = perf_event_read_value(events[i], &enabled, &running); // TODO Support multiplexing properly
+
+		record_fn_hwc(fn_name, suffix, i, value, nb_events);
+		perf_event_disable(events[i]);
+		perf_event_release_kernel(events[i]);
+	}
+
+	kfree(events);
+	current->private_data = NULL;
 }
 
 static int cmp_time (const void * a, const void * b) {
@@ -166,11 +340,24 @@ static void sort_times(struct fn_stats_tree_t* tree) {
 void fn_tree_print(struct seq_file *m, struct fn_stats_tree_t* tree, unsigned long duration) {
 	int i;
 	for(i = 0; i < tree->index; i++){
-		int ratio = duration ? (tree->fn_entries[i].time_spent * 100 / (duration * num_online_cpus())): 0;
-		int ratio_per_core = duration ? (tree->fn_entries[i].max_time_spent_per_core * 100 / duration): 0;
-		unsigned long per_call = tree->fn_entries[i].nr_calls ? (tree->fn_entries[i].time_spent/tree->fn_entries[i].nr_calls): 0;
-		seq_printf(m, "%*s -- nr calls %15lu -- time spent %20lu -- per call %13lu -- %2d %% -- max per core %2d %%\n",
-				MAX_FN_NAME_LENGTH, tree->fn_entries[i].name, tree->fn_entries[i].nr_calls, tree->fn_entries[i].time_spent, per_call, ratio, ratio_per_core);
+		if(tree->fn_entries[i].type == TIME) {
+			int ratio = duration ? (tree->fn_entries[i].time_spent * 100 / (duration * num_online_cpus())): 0;
+			int ratio_per_core = duration ? (tree->fn_entries[i].max_time_spent_per_core * 100 / duration): 0;
+			unsigned long per_call = tree->fn_entries[i].nr_calls ? (tree->fn_entries[i].time_spent/tree->fn_entries[i].nr_calls): 0;
+			seq_printf(m, "%*s -- nr calls %15lu -- time spent %20lu -- per call %13lu -- %2d %% -- max per core %2d %%\n",
+					MAX_FN_NAME_LENGTH, tree->fn_entries[i].name, tree->fn_entries[i].nr_calls, tree->fn_entries[i].time_spent, per_call, ratio, ratio_per_core);
+		}
+		else {
+			int j;
+
+			seq_printf(m, "%*s --", MAX_FN_NAME_LENGTH, tree->fn_entries[i].name);
+
+			for(j = 0; j < tree->fn_entries[i].nr_hwc; j++) {
+				unsigned long per_call = tree->fn_entries[i].nr_calls ? (tree->fn_entries[i].hwc_value[j]/tree->fn_entries[i].nr_calls): 0;
+
+				seq_printf(m, " ( %15lu , %10lu )", tree->fn_entries[i].hwc_value[j], per_call);
+			}
+		}
 	}
 }
 
@@ -186,8 +373,10 @@ void fn_tree_init(void) {
 
 	for_each_online_cpu(cpu) {
 		struct fn_stats_tree_t* tree = per_cpu_ptr(&fn_stats_tree_per_cpu, cpu);
+		struct fn_stats_tree_t* tree_hwc = per_cpu_ptr(&fn_hwc_stats_tree_per_cpu, cpu);
 
 		__fn_tree_init(tree);
+		__fn_tree_init(tree_hwc);
 	}
 
 	write_unlock(&reset_fn_stats_rwl);
@@ -327,6 +516,7 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
 #endif
 	unsigned long rdt = 0;
 	struct fn_stats_tree_t* dest_fn_stats_tree; 
+	struct fn_stats_tree_t* dest_fn_hwc_stats_tree; 
 
 	if(last_rdt_carrefour_stats) {
 		rdtscll(rdt);
@@ -334,7 +524,8 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
 	}
 
 	dest_fn_stats_tree = kmalloc(sizeof(struct fn_stats_tree_t), GFP_KERNEL);
-	if(!dest_fn_stats_tree) {
+	dest_fn_hwc_stats_tree = kmalloc(sizeof(struct fn_stats_tree_t), GFP_KERNEL);
+	if(!dest_fn_stats_tree || !dest_fn_hwc_stats_tree) {
 		printk(KERN_CRIT "No more memory ?\n");
 		BUG_ON(1);
 	}
@@ -492,19 +683,24 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
 
 	//
 	__fn_tree_init(dest_fn_stats_tree);
+	__fn_tree_init(dest_fn_hwc_stats_tree);
 
 	write_lock(&reset_fn_stats_rwl);
 	for_each_online_cpu(cpu) {
 		struct fn_stats_tree_t* tree = per_cpu_ptr(&fn_stats_tree_per_cpu, cpu);
+		struct fn_stats_tree_t* tree_hwc = per_cpu_ptr(&fn_hwc_stats_tree_per_cpu, cpu);
 		merge_fn_arrays(dest_fn_stats_tree, tree);
+		merge_fn_arrays(dest_fn_hwc_stats_tree, tree_hwc);
 	}
 	write_unlock(&reset_fn_stats_rwl);
 
 	sort_times(dest_fn_stats_tree);
 	fn_tree_print(m, dest_fn_stats_tree, rdt);
+	fn_tree_print(m, dest_fn_hwc_stats_tree, rdt);
 	//
 
 	kfree(dest_fn_stats_tree);
+	kfree(dest_fn_hwc_stats_tree);
    kfree(global_stats);
 	kfree(global_tsk_stats);
 
@@ -517,6 +713,8 @@ static int carrefour_stats_open(struct inode *inode, struct file *file) {
 
 static ssize_t carrefour_stats_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos) {
    int cpu;
+
+	watchdog_disable_all_cpus();
 
    write_lock(&reset_stats_rwl);
    for_each_online_cpu(cpu) {
@@ -532,10 +730,10 @@ static ssize_t carrefour_stats_write(struct file *file, const char __user *buf, 
    write_unlock(&reset_stats_rwl);
 
 	fn_tree_init();
-
    _lock_contention_reset();
-
 	rdtscll(last_rdt_carrefour_stats);
+   start_carrefour_profiling = 1;
+
    return count;
 }
 
@@ -573,7 +771,7 @@ static int __init carrefour_stats_init(void)
       return -ENOMEM;
    }
 
-   start_carrefour_profiling = 1;
+	watchdog_disable_all_cpus();
 
 	return 0;
 }

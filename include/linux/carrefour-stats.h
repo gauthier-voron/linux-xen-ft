@@ -147,6 +147,9 @@ typedef int tsk_migrations_stats_t; // make sure that the name exists
 void record_fn_call(const char* fn_name, const char * suffix, unsigned long duration);
 void record_fn_call_no_lock(const char* fn_name, const char * suffix, unsigned long duration); // WARNING: not thread safe! Make sure that preemption cannot happen!
 
+void start_profiling_hwc(void);
+void stop_profiling(const char * fn_name, const char* suffix);
+
 #if !ENABLE_GLOBAL_STATS && (ENABLE_MIGRATION_STATS || ENABLE_MM_LOCK_STATS || ENABLE_TSK_MIGRATION_STATS)
 #error "Cannot enable ENABLE_MIGRATION_STATS or ENABLE_MM_LOCK_STATS or ENABLE_TSK_MIGRATION_STATS without ENABLE_GLOBAL_STATS"
 #endif
