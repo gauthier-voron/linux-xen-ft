@@ -1509,9 +1509,9 @@ out:
 	raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 
 #if ENABLE_TSK_MIGRATION_TIME_STATS
-	record_fn_call_nolock(__FUNCTION__, "-select_task_rq", (rdt_start2 - rdt_start));
+	record_fn_call(__FUNCTION__, "-select_task_rq", (rdt_start2 - rdt_start));
 	if(rdt_stop) {
-		record_fn_call_nolock(__FUNCTION__, "-migration", (rdt_stop - rdt_start2));
+		record_fn_call(__FUNCTION__, "-migration", (rdt_stop - rdt_start2));
 	}
 #endif
 	return success;
@@ -4916,7 +4916,7 @@ fail:
 
 #if ENABLE_TSK_MIGRATION_TIME_STATS
 	rdtscll(rdt_stop);
-	record_fn_call_nolock(__FUNCTION__, NULL, (rdt_stop - rdt_start));
+	record_fn_call(__FUNCTION__, NULL, (rdt_stop - rdt_start));
 #endif
 	return ret;
 }

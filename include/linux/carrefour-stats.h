@@ -145,7 +145,6 @@ typedef int tsk_migrations_stats_t; // make sure that the name exists
 #endif
 
 void record_fn_call(const char* fn_name, const char * suffix, unsigned long duration);
-void record_fn_call_no_lock(const char* fn_name, const char * suffix, unsigned long duration); // WARNING: not thread safe! Make sure that preemption cannot happen!
 
 void start_profiling_hwc(void);
 void stop_profiling(const char * fn_name, const char* suffix);

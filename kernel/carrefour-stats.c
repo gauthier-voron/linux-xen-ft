@@ -52,7 +52,6 @@ struct fn_stats_t {
 
 struct fn_stats_tree_t {
 	struct rb_root root;
-	spinlock_t		lock;
 
 	struct fn_stats_t fn_entries[MAX_FUNCTIONS];
 	int index;
@@ -60,8 +59,6 @@ struct fn_stats_tree_t {
 
 DEFINE_PER_CPU(struct fn_stats_tree_t, fn_stats_tree_per_cpu);
 DEFINE_PER_CPU(struct fn_stats_tree_t, fn_hwc_stats_tree_per_cpu);
-
-DEFINE_RWLOCK(reset_fn_stats_rwl);
 
 struct fn_stats_t* find_fn_in_tree(struct fn_stats_tree_t* tree, const char* fn_name) {
    struct rb_node **new = &(tree->root.rb_node), *parent = NULL;
@@ -133,24 +130,19 @@ void merge_fn_arrays(struct fn_stats_tree_t* dest, struct fn_stats_tree_t* src) 
 	}
 }
 
-static void __record_fn_call(const char* fn_name, const char* suffix, unsigned long duration, int no_lock) {
+void record_fn_call(const char* fn_name, const char* suffix, unsigned long duration) {
 	struct fn_stats_t* f;
-	struct fn_stats_tree_t* tree = per_cpu_ptr(&fn_stats_tree_per_cpu, smp_processor_id());
+	struct fn_stats_tree_t* tree = get_cpu_ptr(&fn_stats_tree_per_cpu);
 
 	char name[MAX_FN_NAME_LENGTH];
 
 	if(!start_carrefour_profiling) {
-		return;
+		goto exit;
 	}
 
 	if(suffix) {
 		snprintf(name, MAX_FN_NAME_LENGTH, "%s%s", fn_name, suffix);
 		fn_name = name;
-	}
-
-	if(!no_lock) {
-		read_lock(&reset_fn_stats_rwl);
-		spin_lock(&tree->lock);
 	}
 
 	f = find_fn_in_tree(tree, fn_name);
@@ -160,18 +152,8 @@ static void __record_fn_call(const char* fn_name, const char* suffix, unsigned l
 		f->time_spent += duration;
 	}
 
-	if(!no_lock) {
-		spin_unlock(&tree->lock);
-		read_unlock(&reset_fn_stats_rwl);
-	}
-}
-
-void record_fn_call(const char* fn_name, const char* suffix, unsigned long duration) {
-	__record_fn_call(fn_name, suffix, duration, 0);
-}
-
-void record_fn_call_no_lock(const char* fn_name, const char* suffix, unsigned long duration) {
-	__record_fn_call(fn_name, suffix, duration, 1);
+exit:
+	put_cpu_ptr(&fn_stats_tree_per_cpu);
 }
 
 static void record_fn_hwc(const char* fn_name, const char* suffix, int index, unsigned long value, unsigned nr_hwc) {
@@ -188,8 +170,6 @@ static void record_fn_hwc(const char* fn_name, const char* suffix, int index, un
 		fn_name = name;
 	}
 
-	read_lock(&reset_fn_stats_rwl);
-
 	f = find_fn_in_tree(tree, fn_name);
 	if(f) {
 		f->type = HWC;
@@ -198,15 +178,13 @@ static void record_fn_hwc(const char* fn_name, const char* suffix, int index, un
 		f->hwc_value[index] += value;
 	}	
 
-	read_unlock(&reset_fn_stats_rwl);
-
 exit:
 	put_cpu_ptr(&fn_hwc_stats_tree_per_cpu);
 }
 
 
 //static unsigned long events_config[] = {0x00040ff41, 0x000400081, 0x00040FF7E, 0x40040f7E1}; // L1D misses, L1I misses, L2 misses, L3 misses 
-static unsigned long events_config[] = {0x00040ff41, 0x000400081, 0x00040FF7E, 0x40040f7E1}; // L1D misses, L1I misses, L2 misses, L3 misses 
+static unsigned long events_config[] = {0x00040ff41, 0x000400081, 0x00040FF7E}; // L1D misses, L1I misses, L2 misses
 static unsigned long events_warned[] = {0};
 static void hwc_overflow_handler(struct perf_event *event, struct perf_sample_data *data, struct pt_regs *regs) {
 	printk("[BUG] Overflows not supported !!\n");
@@ -350,7 +328,7 @@ void fn_tree_print(struct seq_file *m, struct fn_stats_tree_t* tree, unsigned lo
 		else {
 			int j;
 
-			seq_printf(m, "%*s --", MAX_FN_NAME_LENGTH, tree->fn_entries[i].name);
+			seq_printf(m, "%*s -- %10lu -- ", MAX_FN_NAME_LENGTH, tree->fn_entries[i].name, tree->fn_entries[i].nr_calls);
 
 			for(j = 0; j < tree->fn_entries[i].nr_hwc; j++) {
 				unsigned long per_call = tree->fn_entries[i].nr_calls ? (tree->fn_entries[i].hwc_value[j]/tree->fn_entries[i].nr_calls): 0;
@@ -364,12 +342,31 @@ void fn_tree_print(struct seq_file *m, struct fn_stats_tree_t* tree, unsigned lo
 void __fn_tree_init(struct fn_stats_tree_t* tree) {
 	memset(tree, 0, sizeof(struct fn_stats_tree_t));
 	tree->root = RB_ROOT;
-	spin_lock_init(&tree->lock);
 }
 
 void fn_tree_init(void) {
 	int cpu;
-	write_lock(&reset_fn_stats_rwl);
+
+	for_each_online_cpu(cpu) {
+		struct fn_stats_tree_t* tree;
+		struct fn_stats_tree_t* tree_hwc;
+
+		// We go on each cpu so we don't have to take any lock.
+		sched_setaffinity(0, get_cpu_mask(cpu));
+ 
+		tree = get_cpu_ptr(&fn_stats_tree_per_cpu);
+		tree_hwc = get_cpu_ptr(&fn_hwc_stats_tree_per_cpu);
+
+		__fn_tree_init(tree);
+		__fn_tree_init(tree_hwc);
+
+		put_cpu_ptr(&fn_hwc_stats_tree_per_cpu);
+		put_cpu_ptr(&fn_stats_tree_per_cpu);
+	}
+}
+
+void fn_tree_init_safe(void) {
+	int cpu;
 
 	for_each_online_cpu(cpu) {
 		struct fn_stats_tree_t* tree = per_cpu_ptr(&fn_stats_tree_per_cpu, cpu);
@@ -378,8 +375,6 @@ void fn_tree_init(void) {
 		__fn_tree_init(tree);
 		__fn_tree_init(tree_hwc);
 	}
-
-	write_unlock(&reset_fn_stats_rwl);
 }
 
 /**
@@ -685,14 +680,22 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
 	__fn_tree_init(dest_fn_stats_tree);
 	__fn_tree_init(dest_fn_hwc_stats_tree);
 
-	write_lock(&reset_fn_stats_rwl);
 	for_each_online_cpu(cpu) {
-		struct fn_stats_tree_t* tree = per_cpu_ptr(&fn_stats_tree_per_cpu, cpu);
-		struct fn_stats_tree_t* tree_hwc = per_cpu_ptr(&fn_hwc_stats_tree_per_cpu, cpu);
+		struct fn_stats_tree_t* tree;
+		struct fn_stats_tree_t* tree_hwc;
+
+		// We go on each cpu so we don't have to take any lock.
+		sched_setaffinity(0, get_cpu_mask(cpu));
+
+		tree = get_cpu_ptr(&fn_stats_tree_per_cpu);
+		tree_hwc = get_cpu_ptr(&fn_hwc_stats_tree_per_cpu);
+
 		merge_fn_arrays(dest_fn_stats_tree, tree);
 		merge_fn_arrays(dest_fn_hwc_stats_tree, tree_hwc);
+
+		put_cpu_ptr(&fn_hwc_stats_tree_per_cpu);
+		put_cpu_ptr(&fn_stats_tree_per_cpu);
 	}
-	write_unlock(&reset_fn_stats_rwl);
 
 	sort_times(dest_fn_stats_tree);
 	fn_tree_print(m, dest_fn_stats_tree, rdt);
@@ -714,7 +717,7 @@ static int carrefour_stats_open(struct inode *inode, struct file *file) {
 static ssize_t carrefour_stats_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos) {
    int cpu;
 
-	watchdog_disable_all_cpus();
+	//watchdog_disable_all_cpus();
 
    write_lock(&reset_stats_rwl);
    for_each_online_cpu(cpu) {
@@ -759,7 +762,7 @@ static int __init carrefour_stats_init(void)
       memset(stats, 0, sizeof(replication_stats_t));
    }
 
-	fn_tree_init();
+	fn_tree_init_safe();
 
    if(!proc_create(PROCFS_CARREFOUR_STATS_FN, S_IRUGO, NULL, &carrefour_stats_handlers)){
       printk(KERN_ERR "Cannot create /proc/%s\n", PROCFS_CARREFOUR_STATS_FN);
@@ -771,7 +774,7 @@ static int __init carrefour_stats_init(void)
       return -ENOMEM;
    }
 
-	watchdog_disable_all_cpus();
+	//watchdog_disable_all_cpus();
 
 	return 0;
 }

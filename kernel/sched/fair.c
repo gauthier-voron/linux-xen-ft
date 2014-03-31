@@ -5280,7 +5280,7 @@ void idle_balance(int this_cpu, struct rq *this_rq)
 
 #if ENABLE_TSK_MIGRATION_TIME_STATS
 	rdtscll(rdt_stop);
-	record_fn_call_nolock(__FUNCTION__, NULL, (rdt_stop - rdt_start));
+	record_fn_call(__FUNCTION__, NULL, (rdt_stop - rdt_start));
 #endif
 
 	raw_spin_lock(&this_rq->lock);
@@ -5584,7 +5584,7 @@ out:
 
 #if ENABLE_TSK_MIGRATION_TIME_STATS
 	rdtscll(rdt_stop);
-	record_fn_call_nolock(__FUNCTION__, NULL, (rdt_stop - rdt_start));
+	record_fn_call(__FUNCTION__, NULL, (rdt_stop - rdt_start));
 #endif
 }
 
