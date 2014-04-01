@@ -27,7 +27,27 @@ DEFINE_PER_CPU(tsk_migrations_stats_t, tsk_migrations_stats_per_core);
 
 #define MAX_FUNCTIONS		100
 #define MAX_FN_NAME_LENGTH 30
+
+#if ENABLE_HWC_PROFILING
 #define MAX_NR_HWC			4
+
+//static unsigned long events_config[] = {0x00040ff41, 0x000400081, 0x00040FF7E, 0x40040f7E1}; // L1D misses, L1I misses, L2 misses, L3 misses 
+static unsigned long events_config[] = {0x00040ff41, 0x000400081, 0x00040FF7E}; // L1D misses, L1I misses, L2 misses
+static unsigned long events_warned[] = {0};
+
+struct hwc_prof_per_task {
+	struct perf_event * event;
+
+	u64 initial_value;
+	u64 initial_enabled;
+	u64 initial_running;
+	u64 skipped_not_running;
+};
+
+// Watchdog
+static DEFINE_PER_CPU(struct task_struct *, softlockup_watchdog);
+static int watchdog_disabled = 0;
+#endif
 
 enum stats_type {TIME, HWC};
 struct fn_stats_t {
@@ -42,11 +62,13 @@ struct fn_stats_t {
 			unsigned long nr_calls;
 			unsigned long max_time_spent_per_core;
 		};
+#if ENABLE_HWC_PROFILING
 		struct {
 			unsigned long nr_calls;
 			unsigned long hwc_value[MAX_NR_HWC];
 			unsigned	nr_hwc;
 		};
+#endif
 	};
 };
 
@@ -114,6 +136,7 @@ void merge_fn_arrays(struct fn_stats_tree_t* dest, struct fn_stats_tree_t* src) 
 					f->max_time_spent_per_core = src->fn_entries[i].time_spent;
 				}
 			}
+#if ENABLE_HWC_PROFILING
 			else {
 				int j;
 				f->nr_hwc = src->fn_entries[i].nr_hwc;
@@ -123,6 +146,7 @@ void merge_fn_arrays(struct fn_stats_tree_t* dest, struct fn_stats_tree_t* src) 
 					f->hwc_value[j] += src->fn_entries[i].hwc_value[j];
 				}
 			}
+#endif
 		}
 		else {
 			printk("Warning, not enough space in merge tree. Consider increasing MAX_FUNCTIONS\n");
@@ -156,6 +180,7 @@ exit:
 	put_cpu_ptr(&fn_stats_tree_per_cpu);
 }
 
+#if ENABLE_HWC_PROFILING
 static void record_fn_hwc(const char* fn_name, const char* suffix, int index, unsigned long value, unsigned nr_hwc) {
 	struct fn_stats_t* f;
 	struct fn_stats_tree_t* tree = get_cpu_ptr(&fn_hwc_stats_tree_per_cpu);
@@ -183,16 +208,11 @@ exit:
 }
 
 
-//static unsigned long events_config[] = {0x00040ff41, 0x000400081, 0x00040FF7E, 0x40040f7E1}; // L1D misses, L1I misses, L2 misses, L3 misses 
-static unsigned long events_config[] = {0x00040ff41, 0x000400081, 0x00040FF7E}; // L1D misses, L1I misses, L2 misses
-static unsigned long events_warned[] = {0};
 static void hwc_overflow_handler(struct perf_event *event, struct perf_sample_data *data, struct pt_regs *regs) {
 	printk("[BUG] Overflows not supported !!\n");
 	BUG();
 }
 
-static DEFINE_PER_CPU(struct task_struct *, softlockup_watchdog);
-static int watchdog_disabled = 0;
 static void watchdog_disable_all_cpus(void) {
 	unsigned int cpu;
 
@@ -212,8 +232,8 @@ static void watchdog_disable_all_cpus(void) {
 	}
 }
 
-void start_profiling_hwc(void) {
-	struct perf_event ** events = (struct perf_event **) current->private_data;
+void init_hwc_prof(void) {
+	struct hwc_prof_per_task* events;
 	int i;
 	int nb_events = sizeof(events_config) / sizeof(events_config[0]);
 
@@ -226,16 +246,12 @@ void start_profiling_hwc(void) {
 		return;
 	}
 
-	if(unlikely(events)) {
-		printk("BUG. Should have stopped previous recording first\n");
-		BUG();
-	}
-
-	events = kzalloc(sizeof(struct perf_event*) * nb_events, GFP_KERNEL);
+	events = kzalloc(sizeof(struct hwc_prof_per_task) * nb_events, GFP_KERNEL);
 	if(!events) {
 		printk("[BUG] No more memory ?\n");
 		BUG();
 	}
+
 	current->private_data = (void*) events;
 
 	for(i = 0; i < nb_events; i++) {
@@ -247,52 +263,97 @@ void start_profiling_hwc(void) {
 			.exclude_user   = 0,
 		};
 
-		events[i] = perf_event_create_kernel_counter(&attr, -1, current, hwc_overflow_handler, NULL);
-		if (IS_ERR(events[i])) {
+		events[i].event = perf_event_create_kernel_counter(&attr, -1, current, hwc_overflow_handler, NULL);
+		if (IS_ERR(events[i].event)) {
 			if(!events_warned[i]) {
 				events_warned[i] = 1; // No need to use atomic ops. We don't care if it is printed a few times
-				printk(KERN_CRIT "BUG (ERR = %ld) -- index = %d\n", PTR_ERR(events[i]), i);
+				printk(KERN_CRIT "BUG (ERR = %ld) -- index = %d\n", PTR_ERR(events[i].event), i);
 			}
-			events[i] = NULL;
+			events[i].event = NULL;
 			continue;
 		}
 
-		perf_event_enable(events[i]);
+		perf_event_enable(events[i].event);
 	}
 }
 
-void stop_profiling(const char * fn_name, const char* suffix) {
-	struct perf_event ** events = (struct perf_event **) current->private_data;
+void exit_hwc_prof(void) {
+	struct hwc_prof_per_task * events = (struct hwc_prof_per_task *) current->private_data;
 	int i;
 	int nb_events = sizeof(events_config) / sizeof(events_config[0]);
 
-	u64 value, enabled, running;
-
-	if(!start_carrefour_profiling) {
+	if(!start_carrefour_profiling ||  !events) {
 		return;
 	}
 
-	if(unlikely(!events)) {
-		printk(KERN_CRIT "BUG. Should have started recording first\n");
-		BUG();
-	}
-
 	for(i = 0; i < nb_events; i++) {
-		if(!events[i]) {
+		if(!events[i].event) {
 			// Initialization has failed
 			continue;
 		}
 
-		value = perf_event_read_value(events[i], &enabled, &running); // TODO Support multiplexing properly
+		perf_event_disable(events[i].event);
+		perf_event_release_kernel(events[i].event);
+	}
 
-		record_fn_hwc(fn_name, suffix, i, value, nb_events);
-		perf_event_disable(events[i]);
-		perf_event_release_kernel(events[i]);
+	if(events->skipped_not_running) {
+		printk("PID %d -- skipped %lu recording\n", current->pid, events->skipped_not_running);
 	}
 
 	kfree(events);
 	current->private_data = NULL;
 }
+
+void start_recording_hwc(void) {
+	struct hwc_prof_per_task* events = (struct hwc_prof_per_task *) current->private_data;
+
+	int i;
+	int nb_events = sizeof(events_config) / sizeof(events_config[0]);
+
+	if(!start_carrefour_profiling || !events) {
+		return;
+	}
+
+	for(i = 0; i < nb_events; i++) {
+		if(!events[i].event) {
+			continue; // Initialization has failed
+		}
+
+		events[i].initial_value = perf_event_read_value(events[i].event, &events[i].initial_enabled, &events[i].initial_running); // TODO Support multiplexing properly
+	}
+}
+
+void stop_recording_hwc(const char * fn_name, const char* suffix) {
+	struct hwc_prof_per_task * events = (struct hwc_prof_per_task *) current->private_data;
+	int i;
+	int nb_events = sizeof(events_config) / sizeof(events_config[0]);
+
+	if(!start_carrefour_profiling || !events) {
+		return;
+	}
+
+	for(i = 0; i < nb_events; i++) {
+		u64 enabled, running, value;
+
+		if(!events[i].event) {
+			continue; // Initialization has failed
+		}
+
+		value = perf_event_read_value(events[i].event, &enabled, &running);
+
+		if((running - events[i].initial_running) > 0) {
+			// Make sure that we don't register a call if the HWC has not been running
+			// TODO: do it better ?
+			record_fn_hwc(fn_name, suffix, i, (value - events[i].initial_value), nb_events);
+		}
+		else {
+			events->skipped_not_running++;
+		}
+	}
+}
+#else
+#define watchdog_disable_all_cpus() do {} while(0)
+#endif
 
 static int cmp_time (const void * a, const void * b) {
    struct fn_stats_t * fn_a = (struct fn_stats_t *) a;
@@ -325,6 +386,7 @@ void fn_tree_print(struct seq_file *m, struct fn_stats_tree_t* tree, unsigned lo
 			seq_printf(m, "%*s -- nr calls %15lu -- time spent %20lu -- per call %13lu -- %2d %% -- max per core %2d %%\n",
 					MAX_FN_NAME_LENGTH, tree->fn_entries[i].name, tree->fn_entries[i].nr_calls, tree->fn_entries[i].time_spent, per_call, ratio, ratio_per_core);
 		}
+#if ENABLE_HWC_PROFILING
 		else {
 			int j;
 
@@ -336,6 +398,7 @@ void fn_tree_print(struct seq_file *m, struct fn_stats_tree_t* tree, unsigned lo
 				seq_printf(m, " ( %15lu , %10lu )", tree->fn_entries[i].hwc_value[j], per_call);
 			}
 		}
+#endif
 	}
 }
 
@@ -717,7 +780,7 @@ static int carrefour_stats_open(struct inode *inode, struct file *file) {
 static ssize_t carrefour_stats_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos) {
    int cpu;
 
-	//watchdog_disable_all_cpus();
+	watchdog_disable_all_cpus();
 
    write_lock(&reset_stats_rwl);
    for_each_online_cpu(cpu) {
@@ -773,8 +836,6 @@ static int __init carrefour_stats_init(void)
 		printk(KERN_ERR "Cannot create /proc/%s\n", PROCFS_LOCK_FN);
       return -ENOMEM;
    }
-
-	//watchdog_disable_all_cpus();
 
 	return 0;
 }

@@ -1654,6 +1654,8 @@ long do_fork(unsigned long clone_flags,
 			}
 		}
 #endif
+
+		init_hwc_prof();
       /****/
 
 		wake_up_new_task(p);

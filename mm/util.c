@@ -370,12 +370,12 @@ unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
 
 		down_write(&mm->mmap_sem);
 
-		//start_profiling_hwc();
+		start_recording_hwc();
 
 		ret = do_mmap_pgoff(file, addr, len, prot, flag, pgoff,
 				    &populate);
 
-		//stop_profiling(__FUNCTION__, NULL);
+		stop_recording_hwc(__FUNCTION__, NULL);
 
 		up_write(&mm->mmap_sem);
 

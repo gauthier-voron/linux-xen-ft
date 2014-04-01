@@ -9,6 +9,7 @@
 #define ENABLE_TSK_MIGRATION_TIME_STATS	0 // WARNING: Should be checked -- especially for locking...
 #define ENABLE_RWLOCK_STATS					0
 #define ENABLE_MM_FUN_STATS					0
+#define ENABLE_HWC_PROFILING					0
 
 #define PROCFS_LOCK_FN "time_lock"
 #define PROCFS_CARREFOUR_STATS_FN  "carrefour_replication_stats"
@@ -146,8 +147,17 @@ typedef int tsk_migrations_stats_t; // make sure that the name exists
 
 void record_fn_call(const char* fn_name, const char * suffix, unsigned long duration);
 
-void start_profiling_hwc(void);
-void stop_profiling(const char * fn_name, const char* suffix);
+#if ENABLE_HWC_PROFILING
+void init_hwc_prof(void);
+void exit_hwc_prof(void);
+void start_recording_hwc(void);
+void stop_recording_hwc(const char * fn_name, const char* suffix);
+#else
+#define init_hwc_prof()				do {} while (0)
+#define exit_hwc_prof()				do {} while (0)
+#define start_recording_hwc()		do {} while (0)
+#define stop_recording_hwc(f,s)	do {} while (0)
+#endif
 
 #if !ENABLE_GLOBAL_STATS && (ENABLE_MIGRATION_STATS || ENABLE_MM_LOCK_STATS || ENABLE_TSK_MIGRATION_STATS)
 #error "Cannot enable ENABLE_MIGRATION_STATS or ENABLE_MM_LOCK_STATS or ENABLE_TSK_MIGRATION_STATS without ENABLE_GLOBAL_STATS"

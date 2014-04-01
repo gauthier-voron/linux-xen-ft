@@ -2684,8 +2684,13 @@ unsigned long vm_brk(unsigned long addr, unsigned long len)
 
 	down_write(&mm->mmap_sem);
 
+	start_recording_hwc();
+
 	ret = do_brk(addr, len);
 	populate = ((mm->def_flags & VM_LOCKED) != 0);
+
+	stop_recording_hwc(__FUNCTION__, NULL);
+
 	up_write(&mm->mmap_sem);
 	if (populate)
 		mm_populate(addr, len);

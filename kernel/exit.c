@@ -813,6 +813,8 @@ void do_exit(long code)
 	}
 #endif
 
+	exit_hwc_prof();
+
 	exit_mm(tsk);
 
 	if (group_dead)
