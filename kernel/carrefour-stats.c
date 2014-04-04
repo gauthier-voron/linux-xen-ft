@@ -407,27 +407,6 @@ void __fn_tree_init(struct fn_stats_tree_t* tree) {
 	tree->root = RB_ROOT;
 }
 
-void fn_tree_init(void) {
-	int cpu;
-
-	for_each_online_cpu(cpu) {
-		struct fn_stats_tree_t* tree;
-		struct fn_stats_tree_t* tree_hwc;
-
-		// We go on each cpu so we don't have to take any lock.
-		sched_setaffinity(0, get_cpu_mask(cpu));
- 
-		tree = get_cpu_ptr(&fn_stats_tree_per_cpu);
-		tree_hwc = get_cpu_ptr(&fn_hwc_stats_tree_per_cpu);
-
-		__fn_tree_init(tree);
-		__fn_tree_init(tree_hwc);
-
-		put_cpu_ptr(&fn_hwc_stats_tree_per_cpu);
-		put_cpu_ptr(&fn_stats_tree_per_cpu);
-	}
-}
-
 void fn_tree_init_safe(void) {
 	int cpu;
 
@@ -603,10 +582,6 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
 
    for_each_online_cpu(cpu) {
       replication_stats_t * stats = per_cpu_ptr(&replication_stats_per_core, cpu);
-#if ENABLE_TSK_MIGRATION_STATS
-      tsk_migrations_stats_t* tsk_stats = per_cpu_ptr(&tsk_migrations_stats_per_core, cpu);
-#endif
-
       uint64_t* stats_p = (uint64_t*) stats;
 
       // Automatic merging of everything
@@ -625,28 +600,35 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
          ((uint64_t *) global_stats)[i] += stats_p[i];
       }
 
-
-#if ENABLE_TSK_MIGRATION_STATS
-      // Automatic merging of everything
-      stats_p = (uint64_t*) tsk_stats;
-      for(i = 0; i < sizeof(tsk_migrations_stats_t) / sizeof(uint64_t); i++) {
-         ((uint64_t *) global_tsk_stats)[i] += stats_p[i];
-
-			if(&stats_p[i] != &tsk_stats->nr_tsk_migrations_in_rw_lock) {
-				total_nr_task_migrations += stats_p[i];
-			}
-      }
-#endif
-
 #if ENABLE_MIGRATION_STATS
       if(stats->max_nr_migrations_per_4k_page > global_stats->max_nr_migrations_per_4k_page) {
          global_stats->max_nr_migrations_per_4k_page = stats->max_nr_migrations_per_4k_page;
       }
 #endif
    }
-
    write_unlock(&reset_stats_rwl);
 
+#if ENABLE_TSK_MIGRATION_STATS
+   for_each_online_cpu(cpu) {
+      tsk_migrations_stats_t* tsk_stats;
+      uint64_t* stats_p;
+
+		// We go on each cpu so we don't have to take any lock.
+		sched_setaffinity(0, get_cpu_mask(cpu));
+
+		tsk_stats = get_cpu_ptr(&tsk_migrations_stats_per_core);
+
+      // Automatic merging of everything
+      stats_p = (uint64_t*) tsk_stats;
+      for(i = 0; i < sizeof(tsk_migrations_stats_t) / sizeof(uint64_t); i++) {
+         ((uint64_t *) global_tsk_stats)[i] += stats_p[i];
+
+			if(&stats_p[i] < &tsk_stats->nr_tsk_migrations_in_rw_lock) {
+				total_nr_task_migrations += stats_p[i];
+			}
+      }
+   }
+#endif
 
    if(global_stats->nr_readlock_taken) {
       time_rd_lock = (unsigned long) (global_stats->time_spent_acquiring_readlocks / global_stats->nr_readlock_taken);
@@ -727,14 +709,23 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
 	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_wakeup * 100 / total_nr_task_migrations : 0; 
    seq_printf(m, "[GLOBAL] Number of task migrations due to wake up: %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_wakeup, ratio);
 
-	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_wakeup_new * 100 / total_nr_task_migrations : 0; 
-   seq_printf(m, "[GLOBAL] Number of task migrations due to wake up (new): %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_wakeup_new, ratio);
-
 	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_others * 100 / total_nr_task_migrations : 0; 
    seq_printf(m, "[GLOBAL] Number of task migrations due to others: %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_others, ratio);
 
 	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_in_rw_lock * 100 / total_nr_task_migrations : 0; 
    seq_printf(m, "[GLOBAL] Number of task migrations while task holding a rw lock: %lu (%d %%)\n\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_in_rw_lock, ratio);
+
+
+   seq_printf(m, "[GLOBAL] Total number of task migrations: %lu\n", (unsigned long) total_nr_task_migrations);
+
+	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migration_to_local_node * 100 / total_nr_task_migrations : 0;
+   seq_printf(m, "[GLOBAL] Total number of task migrations to local node: %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migration_to_local_node, ratio);
+
+	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migration_to_remote_node * 100 / total_nr_task_migrations : 0;
+   seq_printf(m, "[GLOBAL] Total number of task migrations to remote node: %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migration_to_remote_node, ratio);
+
+	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migration_to_same_core * 100 / total_nr_task_migrations : 0;
+   seq_printf(m, "[GLOBAL] Total number of task migrations to same core ...: %lu (%d %%)\n\n", (unsigned long) global_tsk_stats->nr_tsk_migration_to_same_core, ratio);
 #endif
 
    seq_printf(m, "[GLOBAL] Estimated number of cycles: %lu\n\n", (unsigned long) rdt);
@@ -786,17 +777,35 @@ static ssize_t carrefour_stats_write(struct file *file, const char __user *buf, 
    for_each_online_cpu(cpu) {
       /** Don't need to disable preemption here because we have the write lock **/
       replication_stats_t * stats = per_cpu_ptr(&replication_stats_per_core, cpu);
-#if ENABLE_TSK_MIGRATION_STATS
-      tsk_migrations_stats_t * stats_tsk = per_cpu_ptr(&tsk_migrations_stats_per_core, cpu);
-      memset(stats_tsk, 0, sizeof(tsk_migrations_stats_t));
-#endif
       memset(stats, 0, sizeof(replication_stats_t));
    }
-
    write_unlock(&reset_stats_rwl);
 
-	fn_tree_init();
+	for_each_online_cpu(cpu) {
+		struct fn_stats_tree_t* tree;
+		struct fn_stats_tree_t* tree_hwc;
+
+		// We go on each cpu so we don't have to take any lock.
+		sched_setaffinity(0, get_cpu_mask(cpu));
+
+		tree = get_cpu_ptr(&fn_stats_tree_per_cpu);
+		tree_hwc = get_cpu_ptr(&fn_hwc_stats_tree_per_cpu);
+
+		__fn_tree_init(tree);
+		__fn_tree_init(tree_hwc);
+
+		if(ENABLE_TSK_MIGRATION_STATS) {
+			tsk_migrations_stats_t * stats_tsk = get_cpu_ptr(&tsk_migrations_stats_per_core);
+			memset(stats_tsk, 0, sizeof(tsk_migrations_stats_t));
+			put_cpu_ptr(&tsk_migrations_stats_per_core);
+		}
+ 
+		put_cpu_ptr(&fn_hwc_stats_tree_per_cpu);
+		put_cpu_ptr(&fn_stats_tree_per_cpu);
+	}
+
    _lock_contention_reset();
+
 	rdtscll(last_rdt_carrefour_stats);
    start_carrefour_profiling = 1;
 

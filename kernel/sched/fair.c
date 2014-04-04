@@ -4027,11 +4027,17 @@ static int move_tasks(struct lb_env *env)
 		if (!can_migrate_task(p, env))
 			goto next;
 
+
 		// FGAUD
+		if(env->src_cpu == env->dst_cpu) {
+			goto next;
+		}
+
 		if(p->is_in_rw_lock) {
 			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
 			//goto next;
 		}
+		//
 
 		move_task(p, env);
 		pulled++;

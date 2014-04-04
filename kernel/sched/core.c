@@ -983,6 +983,18 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 		tmn.to_cpu = new_cpu;
 
 		atomic_notifier_call_chain(&task_migration_notifier, 0, &tmn);
+
+#if ENABLE_TSK_MIGRATION_STATS
+		if(cpu_to_node(task_cpu(p)) != cpu_to_node(new_cpu)) {
+			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migration_to_remote_node, 1);
+		}
+		else {
+			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migration_to_local_node, 1);
+		}
+#endif
+	}
+	else {
+		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migration_to_same_core, 1);
 	}
 
 	__set_task_cpu(p, new_cpu);
@@ -1743,10 +1755,6 @@ void wake_up_new_task(struct task_struct *p)
 	 *  - cpus_allowed can change in the fork path
 	 *  - any previously selected cpu might disappear through hotplug
 	 */
-
-	// FGAUD
-	INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_wakeup_new, 1);
-
 	set_task_cpu(p, select_task_rq(p, SD_BALANCE_FORK, 0));
 #endif
 
@@ -2644,15 +2652,6 @@ void sched_exec(void)
 
 	if (likely(cpu_active(dest_cpu))) {
 		struct migration_arg arg = { p, dest_cpu };
-
-		// FGAUD
-		if(p->is_in_rw_lock) {
-			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
-			//goto unlock;
-		}
-
-		// FGAUD
-		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_wakeup_new, 1);
 
 		raw_spin_unlock_irqrestore(&p->pi_lock, flags);
 		stop_one_cpu(task_cpu(p), migration_cpu_stop, &arg);
@@ -4843,15 +4842,6 @@ int set_cpus_allowed_ptr(struct task_struct *p, const struct cpumask *new_mask)
 		/* Need help from migration thread: drop lock and wait. */
 		task_rq_unlock(rq, p, &flags);
 
-		// FGAUD
-		if(p->is_in_rw_lock) {
-			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
-			//return 0;
-		}
-
-		// FGAUD
-		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_others, 1);
-
 		stop_one_cpu(cpu_of(rq), migration_cpu_stop, &arg);
 		tlb_migrate_finish(p->mm);
 		return 0;
@@ -4893,10 +4883,16 @@ static int __migrate_task(struct task_struct *p, int src_cpu, int dest_cpu)
 	double_rq_lock(rq_src, rq_dest);
 	/* Already moved. */
 	if (task_cpu(p) != src_cpu)
-		goto done;
+		goto fail; // FGAUD
+		//goto done;
 	/* Affinity changed (again). */
 	if (!cpumask_test_cpu(dest_cpu, tsk_cpus_allowed(p)))
 		goto fail;
+
+	// FGAUD
+	if(task_cpu(p) == dest_cpu)
+		goto fail;
+	//
 
 	/*
 	 * If we're not on a rq, the next wake-up will ensure we're
@@ -4908,6 +4904,12 @@ static int __migrate_task(struct task_struct *p, int src_cpu, int dest_cpu)
 		enqueue_task(rq_dest, p, 0);
 		check_preempt_curr(rq_dest, p, 0);
 	}
+	// FGAUD
+	else {
+		goto fail;
+	}
+	//
+
 done:
 	ret = 1;
 fail:
@@ -4935,7 +4937,14 @@ static int migration_cpu_stop(void *data)
 	 * be on another cpu but it doesn't matter.
 	 */
 	local_irq_disable();
-	__migrate_task(arg->task, raw_smp_processor_id(), arg->dest_cpu);
+
+	//__migrate_task(arg->task, raw_smp_processor_id(), arg->dest_cpu);
+	// FGAUD
+	if(__migrate_task(arg->task, raw_smp_processor_id(), arg->dest_cpu)) {
+		// FGAUD
+		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_others, 1);
+	}
+	//
 	local_irq_enable();
 	return 0;
 }
@@ -5017,10 +5026,12 @@ static void migrate_tasks(unsigned int dead_cpu)
 			// We cannot avoid it because the cpu is "dead"
 		}
 
+		//__migrate_task(next, dead_cpu, dest_cpu);
 		// FGAUD
-		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_others, 1);
-
-		__migrate_task(next, dead_cpu, dest_cpu);
+		if(__migrate_task(next, dead_cpu, dest_cpu)) {
+			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_others, 1);
+		}
+		//
 
 		raw_spin_lock(&rq->lock);
 	}
