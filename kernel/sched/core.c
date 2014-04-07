@@ -984,17 +984,15 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 
 		atomic_notifier_call_chain(&task_migration_notifier, 0, &tmn);
 
-#if ENABLE_TSK_MIGRATION_STATS
 		if(cpu_to_node(task_cpu(p)) != cpu_to_node(new_cpu)) {
-			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migration_to_remote_node, 1);
+			INCR_TSKMIGR_STAT_VALUE(p, nr_tsk_migration_to_remote_node, 1);
 		}
 		else {
-			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migration_to_local_node, 1);
+			INCR_TSKMIGR_STAT_VALUE(p, nr_tsk_migration_to_local_node, 1);
 		}
-#endif
 	}
 	else {
-		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migration_to_same_core, 1);
+		INCR_TSKMIGR_STAT_VALUE(p, nr_tsk_migration_to_same_core, 1);
 	}
 
 	__set_task_cpu(p, new_cpu);
@@ -1497,15 +1495,20 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 #endif
 
 	// FGAUD
-	if(p->is_in_rw_lock) {
-		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
-		//cpu = task_cpu(p);
+	if(0) {
+		char comm[TASK_COMM_LEN];
+		get_task_comm(comm, p);
+		if(strnstr(comm, "oracle_", TASK_COMM_LEN)) {
+			cpu = task_cpu(p);
+		}
 	}
+	//
+
 	if (task_cpu(p) != cpu) {
 		wake_flags |= WF_MIGRATED;
 
 		// FGAUD
-		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_wakeup, 1);
+		INCR_TSKMIGR_STAT_VALUE(p, nr_tsk_migrations_wakeup, 1);
 		set_task_cpu(p, cpu);
 
 #if ENABLE_TSK_MIGRATION_TIME_STATS
@@ -1743,10 +1746,26 @@ void sched_fork(struct task_struct *p)
  * that must be done for every newly created context, then puts the task
  * on the runqueue and wakes it.
  */
+static volatile int next_proc = 0;
 void wake_up_new_task(struct task_struct *p)
 {
 	unsigned long flags;
 	struct rq *rq;
+
+	int dest_cpu;
+
+	dest_cpu = select_task_rq(p, SD_BALANCE_FORK, 0);
+
+	// FGAUD
+	if(0) {
+		char  comm[TASK_COMM_LEN];
+		get_task_comm(comm, p);
+
+		if(strnstr(comm, "oracle_", TASK_COMM_LEN)) {
+			dest_cpu = __sync_fetch_and_add(&next_proc, 1);
+		}
+	}
+	//
 
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
 #ifdef CONFIG_SMP
@@ -1755,7 +1774,7 @@ void wake_up_new_task(struct task_struct *p)
 	 *  - cpus_allowed can change in the fork path
 	 *  - any previously selected cpu might disappear through hotplug
 	 */
-	set_task_cpu(p, select_task_rq(p, SD_BALANCE_FORK, 0));
+	set_task_cpu(p, dest_cpu);
 #endif
 
 	rq = __task_rq_lock(p);
@@ -2646,7 +2665,20 @@ void sched_exec(void)
 	int dest_cpu;
 
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
+
 	dest_cpu = p->sched_class->select_task_rq(p, SD_BALANCE_EXEC, 0);
+
+	// FGAUD
+	if(0) {
+		char  comm[TASK_COMM_LEN];
+		get_task_comm(comm, p);
+
+		if(strnstr(comm, "oracle_", TASK_COMM_LEN)) {
+			dest_cpu = __sync_fetch_and_add(&next_proc, 1);
+		}
+	}
+	//
+
 	if (dest_cpu == smp_processor_id())
 		goto unlock;
 
@@ -4910,7 +4942,7 @@ static int __migrate_task(struct task_struct *p, int src_cpu, int dest_cpu)
 	}
 	//
 
-done:
+//done:
 	ret = 1;
 fail:
 	double_rq_unlock(rq_src, rq_dest);
@@ -4942,7 +4974,7 @@ static int migration_cpu_stop(void *data)
 	// FGAUD
 	if(__migrate_task(arg->task, raw_smp_processor_id(), arg->dest_cpu)) {
 		// FGAUD
-		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_others, 1);
+		INCR_TSKMIGR_STAT_VALUE(arg->task, nr_tsk_migrations_others, 1);
 	}
 	//
 	local_irq_enable();
@@ -5021,15 +5053,23 @@ static void migrate_tasks(unsigned int dead_cpu)
 		dest_cpu = select_fallback_rq(dead_cpu, next);
 		raw_spin_unlock(&rq->lock);
 
+		{
+			char  comm[TASK_COMM_LEN];
+			get_task_comm(comm, next);
+			if(strnstr(comm, "oracle_", TASK_COMM_LEN)) {
+				printk("Cannot avoid this one !\n");
+			}
+		}
+
 		if(next->is_in_rw_lock) {
-			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
+			INCR_TSKMIGR_STAT_VALUE(next, nr_tsk_migrations_in_rw_lock, 1);
 			// We cannot avoid it because the cpu is "dead"
 		}
 
 		//__migrate_task(next, dead_cpu, dest_cpu);
 		// FGAUD
 		if(__migrate_task(next, dead_cpu, dest_cpu)) {
-			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_others, 1);
+			INCR_TSKMIGR_STAT_VALUE(next, nr_tsk_migrations_others, 1);
 		}
 		//
 
@@ -6243,7 +6283,8 @@ sd_numa_init(struct sched_domain_topology_level *tl, int cpu)
 
 static const struct cpumask *sd_numa_mask(int cpu)
 {
-	return sched_domains_numa_masks[sched_domains_curr_level][cpu_to_node(cpu)];
+	//return sched_domains_numa_masks[sched_domains_curr_level][cpu_to_node(cpu)];
+	return cpu_possible_mask;
 }
 
 static void sched_numa_warn(const char *str)

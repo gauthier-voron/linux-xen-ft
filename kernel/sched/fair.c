@@ -3960,10 +3960,20 @@ static int move_one_task(struct lb_env *env)
 			continue;
 
 		// FGAUD
+		if(0) {
+			char  comm[TASK_COMM_LEN];
+			get_task_comm(comm, p);
+
+			if(strnstr(comm, "oracle_", TASK_COMM_LEN)) {
+				continue;
+			}
+		}
+
 		if(p->is_in_rw_lock) {
-			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
+			INCR_TSKMIGR_STAT_VALUE(p, nr_tsk_migrations_in_rw_lock, 1);
 			//continue;
 		}
+		//
 
 		move_task(p, env);
 		/*
@@ -4033,9 +4043,25 @@ static int move_tasks(struct lb_env *env)
 			goto next;
 		}
 
+		if(0){
+			char  comm[TASK_COMM_LEN];
+			get_task_comm(comm, p);
+
+			if(strnstr(comm, "oracle_", TASK_COMM_LEN)) {
+				goto next;
+			}
+		}
+
 		if(p->is_in_rw_lock) {
-			INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_in_rw_lock, 1);
+			INCR_TSKMIGR_STAT_VALUE(p, nr_tsk_migrations_in_rw_lock, 1);
 			//goto next;
+		}
+
+		if(env->idle == CPU_NEWLY_IDLE) {
+			INCR_TSKMIGR_STAT_VALUE(p, nr_tsk_migrations_idle, 1); 
+		}
+		else {
+			INCR_TSKMIGR_STAT_VALUE(p, nr_tsk_migrations_rebalance, 1); 
 		}
 		//
 
@@ -5279,11 +5305,6 @@ void idle_balance(int this_cpu, struct rq *this_rq)
 	}
 	rcu_read_unlock();
 
-	// FGAUD
-	if(pulled_task) {
-		INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_idle, pulled_task); 
-	}
-
 #if ENABLE_TSK_MIGRATION_TIME_STATS
 	rdtscll(rdt_stop);
 	record_fn_call(__FUNCTION__, NULL, (rdt_stop - rdt_start));
@@ -5554,11 +5575,6 @@ static void rebalance_domains(int cpu, enum cpu_idle_type idle)
 				 * longer idle.
 				 */
 				idle = CPU_NOT_IDLE;
-
-				// FGAUD
-				if(pulled_task) {
-					INCR_TSKMIGR_STAT_VALUE(nr_tsk_migrations_rebalance, pulled_task); 
-				}
 			}
 			sd->last_balance = jiffies;
 		}

@@ -6,10 +6,13 @@
 #define ENABLE_GLOBAL_STATS					1
 #define ENABLE_MIGRATION_STATS				1
 #define ENABLE_TSK_MIGRATION_STATS			1
-#define ENABLE_TSK_MIGRATION_TIME_STATS	0 // WARNING: Should be checked -- especially for locking...
+#define ENABLE_TSK_MIGRATION_TIME_STATS	0
+#define ENABLE_TSK_STATS_APP_NAME_FILTER	0
 #define ENABLE_RWLOCK_STATS					0
 #define ENABLE_MM_FUN_STATS					0
 #define ENABLE_HWC_PROFILING					0
+
+#define TSK_STATS_APP_NAME_FILTER	"oracle_"
 
 #define PROCFS_LOCK_FN "time_lock"
 #define PROCFS_CARREFOUR_STATS_FN  "carrefour_replication_stats"
@@ -132,18 +135,23 @@ typedef struct __attribute__((packed)) {
 
 DECLARE_PER_CPU(tsk_migrations_stats_t, tsk_migrations_stats_per_core);
 
-#define INCR_TSKMIGR_STAT_VALUE(entry, value) { \
+#define INCR_TSKMIGR_STAT_VALUE(task, entry, value) { \
    if(likely(start_carrefour_profiling)){ \
-      tsk_migrations_stats_t* stats; \
-      stats = get_cpu_ptr(&tsk_migrations_stats_per_core); \
-      stats->entry += value; \
-		put_cpu_ptr(&tsk_migrations_stats_per_core); \
-   } \
+		char  comm[TASK_COMM_LEN]; \
+		get_task_comm(comm, task); \
+		\
+		if(!ENABLE_TSK_STATS_APP_NAME_FILTER || strnstr(comm,TSK_STATS_APP_NAME_FILTER, TASK_COMM_LEN)) { \
+			tsk_migrations_stats_t* stats; \
+			stats = get_cpu_ptr(&tsk_migrations_stats_per_core); \
+			stats->entry += value; \
+			put_cpu_ptr(&tsk_migrations_stats_per_core); \
+		} \
+	} \
 }
 
 #else
 typedef int tsk_migrations_stats_t; // make sure that the name exists
-#define INCR_TSKMIGR_STAT_VALUE(e,v) do {} while (0)
+#define INCR_TSKMIGR_STAT_VALUE(t,e,v) do {} while (0)
 #endif
 
 void record_fn_call(const char* fn_name, const char * suffix, unsigned long duration);
