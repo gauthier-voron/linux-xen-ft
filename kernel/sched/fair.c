@@ -36,6 +36,7 @@
 
 // FGAUD
 #include <linux/carrefour-stats.h>
+#include <linux/carrefour-sched.h>
 
 /*
  * Targeted preemption latency for CPU-bound tasks:
@@ -3960,19 +3961,16 @@ static int move_one_task(struct lb_env *env)
 			continue;
 
 		// FGAUD
-		if(0) {
+		if(DISABLE_ACTIVE_LB_CPU_STOP) {
 			char  comm[TASK_COMM_LEN];
 			get_task_comm(comm, p);
 
-			if(strnstr(comm, "oracle_", TASK_COMM_LEN)) {
+			if(strnstr(comm, APP_NAME_FILTER, TASK_COMM_LEN)) {
 				continue;
 			}
 		}
 
-		if(p->is_in_rw_lock) {
-			INCR_TSKMIGR_STAT_VALUE(p, nr_tsk_migrations_in_rw_lock, 1);
-			//continue;
-		}
+		INCR_TSKMIGR_STAT_VALUE(p, nr_tsk_migrations_active_lb_cpu_stop, 1);
 		//
 
 		move_task(p, env);
@@ -4043,24 +4041,31 @@ static int move_tasks(struct lb_env *env)
 			goto next;
 		}
 
-		if(0){
-			char  comm[TASK_COMM_LEN];
-			get_task_comm(comm, p);
-
-			if(strnstr(comm, "oracle_", TASK_COMM_LEN)) {
-				goto next;
-			}
-		}
-
 		if(p->is_in_rw_lock) {
 			INCR_TSKMIGR_STAT_VALUE(p, nr_tsk_migrations_in_rw_lock, 1);
 			//goto next;
 		}
 
 		if(env->idle == CPU_NEWLY_IDLE) {
+#if DISABLE_IDLE_LB
+			char comm[TASK_COMM_LEN];
+			get_task_comm(comm, p);
+			if(strnstr(comm, APP_NAME_FILTER, TASK_COMM_LEN)) {
+				goto next;
+			}
+#endif
+
 			INCR_TSKMIGR_STAT_VALUE(p, nr_tsk_migrations_idle, 1); 
 		}
 		else {
+#if DISABLE_PERIODIC_LB
+			char comm[TASK_COMM_LEN];
+			get_task_comm(comm, p);
+			if(strnstr(comm, APP_NAME_FILTER, TASK_COMM_LEN)) {
+				goto next;
+			}
+#endif
+
 			INCR_TSKMIGR_STAT_VALUE(p, nr_tsk_migrations_rebalance, 1); 
 		}
 		//

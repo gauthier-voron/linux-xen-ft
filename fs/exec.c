@@ -66,6 +66,8 @@
 
 #include <trace/events/sched.h>
 
+#include <linux/carrefour-sched.h>
+
 int suid_dumpable = 0;
 
 static LIST_HEAD(formats);
@@ -1046,6 +1048,10 @@ void set_task_comm(struct task_struct *tsk, char *buf)
    if(pinthread_callback) {
       pinthread_callback(current, TASKCOMM);
    }
+
+#if ENABLE_SMART_INITIAL_PLACEMENT
+	sched_exec();
+#endif
 
 #if ENABLE_RWSEM_ORDER_HACK
 	{

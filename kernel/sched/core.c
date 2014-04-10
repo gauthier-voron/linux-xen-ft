@@ -91,6 +91,7 @@
 
 // FGAUD
 #include <linux/carrefour-stats.h>
+#include <linux/carrefour-sched.h>
 
 void start_bandwidth_timer(struct hrtimer *period_timer, ktime_t period)
 {
@@ -995,6 +996,9 @@ void set_task_cpu(struct task_struct *p, unsigned int new_cpu)
 		INCR_TSKMIGR_STAT_VALUE(p, nr_tsk_migration_to_same_core, 1);
 	}
 
+	// FGAUD
+	DEBUG_TASK_PLACEMENT("==> Setting pid %d on cpu %d\n", p->pid, new_cpu);
+
 	__set_task_cpu(p, new_cpu);
 }
 
@@ -1495,11 +1499,20 @@ try_to_wake_up(struct task_struct *p, unsigned int state, int wake_flags)
 #endif
 
 	// FGAUD
-	if(0) {
+	if(ENABLE_SMART_INITIAL_PLACEMENT || DISABLE_WAKEUP_LB) {
 		char comm[TASK_COMM_LEN];
 		get_task_comm(comm, p);
-		if(strnstr(comm, "oracle_", TASK_COMM_LEN)) {
+		if(strnstr(comm, APP_NAME_FILTER, TASK_COMM_LEN)) {
+#if ENABLE_SMART_INITIAL_PLACEMENT
+			if(!p->on_rq) {
+				cpu = p->pinthread_data;
+			}
+			else {
+				cpu = task_cpu(p);
+			}
+#else
 			cpu = task_cpu(p);
+#endif
 		}
 	}
 	//
@@ -1746,7 +1759,7 @@ void sched_fork(struct task_struct *p)
  * that must be done for every newly created context, then puts the task
  * on the runqueue and wakes it.
  */
-static volatile int next_proc = 0;
+
 void wake_up_new_task(struct task_struct *p)
 {
 	unsigned long flags;
@@ -1756,18 +1769,15 @@ void wake_up_new_task(struct task_struct *p)
 
 	dest_cpu = select_task_rq(p, SD_BALANCE_FORK, 0);
 
-	// FGAUD
-	if(0) {
-		char  comm[TASK_COMM_LEN];
-		get_task_comm(comm, p);
-
-		if(strnstr(comm, "oracle_", TASK_COMM_LEN)) {
-			dest_cpu = __sync_fetch_and_add(&next_proc, 1);
-		}
-	}
-	//
-
 	raw_spin_lock_irqsave(&p->pi_lock, flags);
+
+#if ENABLE_SMART_INITIAL_PLACEMENT
+	// FGAUD
+	p->pinthread_done = 0;
+	dest_cpu = modify_cpu_dest(p, dest_cpu);
+	//
+#endif
+
 #ifdef CONFIG_SMP
 	/*
 	 * Fork balancing, do it here and not earlier because:
@@ -2668,16 +2678,11 @@ void sched_exec(void)
 
 	dest_cpu = p->sched_class->select_task_rq(p, SD_BALANCE_EXEC, 0);
 
+#if ENABLE_SMART_INITIAL_PLACEMENT
 	// FGAUD
-	if(0) {
-		char  comm[TASK_COMM_LEN];
-		get_task_comm(comm, p);
-
-		if(strnstr(comm, "oracle_", TASK_COMM_LEN)) {
-			dest_cpu = __sync_fetch_and_add(&next_proc, 1);
-		}
-	}
+	dest_cpu = modify_cpu_dest(p, dest_cpu);
 	//
+#endif
 
 	if (dest_cpu == smp_processor_id())
 		goto unlock;
@@ -5052,14 +5057,6 @@ static void migrate_tasks(unsigned int dead_cpu)
 		/* Find suitable destination for @next, with force if needed. */
 		dest_cpu = select_fallback_rq(dead_cpu, next);
 		raw_spin_unlock(&rq->lock);
-
-		{
-			char  comm[TASK_COMM_LEN];
-			get_task_comm(comm, next);
-			if(strnstr(comm, "oracle_", TASK_COMM_LEN)) {
-				printk("Cannot avoid this one !\n");
-			}
-		}
 
 		if(next->is_in_rw_lock) {
 			INCR_TSKMIGR_STAT_VALUE(next, nr_tsk_migrations_in_rw_lock, 1);

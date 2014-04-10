@@ -709,6 +709,9 @@ static int display_carrefour_stats(struct seq_file *m, void* v)
 	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_wakeup * 100 / total_nr_task_migrations : 0; 
    seq_printf(m, "[GLOBAL] Number of task migrations due to wake up: %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_wakeup, ratio);
 
+	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_active_lb_cpu_stop * 100 / total_nr_task_migrations : 0; 
+   seq_printf(m, "[GLOBAL] Number of task migrations due to active cpu stop: %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_active_lb_cpu_stop, ratio);
+
 	ratio = total_nr_task_migrations ? global_tsk_stats->nr_tsk_migrations_others * 100 / total_nr_task_migrations : 0; 
    seq_printf(m, "[GLOBAL] Number of task migrations due to others: %lu (%d %%)\n", (unsigned long) global_tsk_stats->nr_tsk_migrations_others, ratio);
 

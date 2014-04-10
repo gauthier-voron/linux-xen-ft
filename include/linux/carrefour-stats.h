@@ -7,12 +7,12 @@
 #define ENABLE_MIGRATION_STATS				1
 #define ENABLE_TSK_MIGRATION_STATS			1
 #define ENABLE_TSK_MIGRATION_TIME_STATS	0
-#define ENABLE_TSK_STATS_APP_NAME_FILTER	0
+#define ENABLE_TSK_STATS_APP_NAME_FILTER	1
 #define ENABLE_RWLOCK_STATS					0
 #define ENABLE_MM_FUN_STATS					0
 #define ENABLE_HWC_PROFILING					0
 
-#define TSK_STATS_APP_NAME_FILTER	"oracle_"
+#define APP_NAME_FILTER	"oracle_"
 
 #define PROCFS_LOCK_FN "time_lock"
 #define PROCFS_CARREFOUR_STATS_FN  "carrefour_replication_stats"
@@ -124,6 +124,7 @@ typedef struct __attribute__((packed)) {
    uint64_t nr_tsk_migrations_idle;
    uint64_t nr_tsk_migrations_rebalance;
    uint64_t nr_tsk_migrations_wakeup;
+   uint64_t nr_tsk_migrations_active_lb_cpu_stop;
    uint64_t nr_tsk_migrations_others;
 
 	// STOP automerge
@@ -140,7 +141,7 @@ DECLARE_PER_CPU(tsk_migrations_stats_t, tsk_migrations_stats_per_core);
 		char  comm[TASK_COMM_LEN]; \
 		get_task_comm(comm, task); \
 		\
-		if(!ENABLE_TSK_STATS_APP_NAME_FILTER || strnstr(comm,TSK_STATS_APP_NAME_FILTER, TASK_COMM_LEN)) { \
+		if(!ENABLE_TSK_STATS_APP_NAME_FILTER || strnstr(comm, APP_NAME_FILTER, TASK_COMM_LEN)) { \
 			tsk_migrations_stats_t* stats; \
 			stats = get_cpu_ptr(&tsk_migrations_stats_per_core); \
 			stats->entry += value; \

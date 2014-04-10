@@ -1643,7 +1643,7 @@ long do_fork(unsigned long clone_flags,
 		{
 			char comm[TASK_COMM_LEN]; //FGAUD
 			get_task_comm(comm, p);
-			if(strnstr(comm, "oracle_", TASK_COMM_LEN)) {
+			if(strnstr(comm, APP_NAME_FILTER, TASK_COMM_LEN)) {
 				if(p->mm && !p->mm->mmap_sem.nr_read_locks) {
 					p->mm->mmap_sem.nr_read_locks = vzalloc(sizeof(unsigned) * NR_READ_LOCK_SIZE); 
 					p->mm->mmap_sem.nr_read_locks_index = 0; 
