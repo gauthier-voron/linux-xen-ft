@@ -790,6 +790,7 @@ void do_exit(long code)
 	tsk->exit_code = code;
 	taskstats_exit(tsk, group_dead);
 
+   /** FGAUD **/
 #if ENABLE_RWSEM_ORDER_HACK
 	// FGAUD
 	if(tsk->mm) {
@@ -813,7 +814,12 @@ void do_exit(long code)
 	}
 #endif
 
+   if(pinthread_callback) {
+      pinthread_callback(tsk, EXIT);
+   }
+
 	exit_hwc_prof();
+   /****/
 
 	exit_mm(tsk);
 
@@ -828,12 +834,6 @@ void do_exit(long code)
 	exit_task_work(tsk);
 	check_stack_usage();
 	exit_thread();
-
-   /** FGAUD **/
-   if(pinthread_callback) {
-      pinthread_callback(tsk, EXIT);
-   }
-   /****/
 
 	/*
 	 * Flush inherited counters to the parent - before the parent

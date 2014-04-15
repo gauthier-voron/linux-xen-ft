@@ -1604,6 +1604,8 @@ struct task_struct {
    int pinthread_data;
    int pinthread_session_id;
 
+	struct list_head pinthread_list;
+
 	// -- Use to store events
 	void * private_data;
 };
