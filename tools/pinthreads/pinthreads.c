@@ -27,6 +27,8 @@ Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 #include <linux/freezer.h>
 #include <linux/kthread.h>
 
+#include <linux/carrefour-sched.h>
+
 #define MAX_CONSIDERED_APPS   32
 
 #define ENABLE_PERIODIC_ROTATION	0
@@ -302,6 +304,11 @@ static int pinthread_rotate_thread(void *nothing) {
 static int __init pinthreads_init_module(void) {
    int i;
    int cpu, node;
+
+	if(ENABLE_SMART_INITIAL_PLACEMENT) {
+		printk(KERN_WARNING "Pinthread cannot be loaded when ENABLE_SMART_INITIAL_PLACEMENT is enabled\n");
+		return -1;
+	}
 
    printk("Pinthreads: considered_apps:");
    if(num_considered_apps) {
