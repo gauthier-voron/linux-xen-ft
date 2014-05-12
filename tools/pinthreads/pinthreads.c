@@ -45,6 +45,10 @@ module_param(spread, bool, S_IRUGO);
 static bool mode = 0;
 module_param(mode, bool, S_IRUGO);
 
+static int considered_cpus[64];
+static int num_considered_cpus = 0;
+module_param_array(considered_cpus, int, &num_considered_cpus, S_IRUGO);
+
 struct entry_t {
 	int nr_tasks;
 	struct list_head list_of_tasks;
@@ -75,12 +79,16 @@ static inline int __get_next_entry(int current_entry) {
       int entry = array[i];
 
       //printk("%d ", nr_process[i]);
-      if((min == -1 || nr_process[entry].nr_tasks < nr_process[min].nr_tasks)) {
-         if((!mode && cpu_online(entry)) || (mode && node_online(entry))) {
-            min = entry;
-         }
-      }
-   }
+		if((min == -1 || nr_process[entry].nr_tasks < nr_process[min].nr_tasks)) {
+			if(num_considered_cpus) {
+				min = entry;
+			} else {
+				if((!mode && cpu_online(entry)) || (mode && node_online(entry))) {
+					min = entry;
+				}
+			}
+		}
+	}
    //printk("\n");
 
    if(min == -1) {
@@ -325,7 +333,9 @@ static int __init pinthreads_init_module(void) {
    printk("Session id: %u\n", session_id);
 
    printk("Mode: %d (%s)\n", mode, mode ? "Node": "Core");
-   if(mode) {
+   if(num_considered_cpus) {
+		array_sz = num_considered_cpus;
+   } else if(mode) {
       array_sz = num_possible_nodes();
    }
    else {
@@ -340,7 +350,11 @@ static int __init pinthreads_init_module(void) {
       return -1;
    }
 
-   if(mode) {
+	if(num_considered_cpus) {
+		for(i = 0; i < num_considered_cpus; i++) {
+			array[i] = considered_cpus[i];
+		}
+   } else if(mode) {
       for_each_node(node) {
          array[node] = node;
       }
@@ -388,9 +402,12 @@ static int __init pinthreads_init_module(void) {
       }
    }
 
+	printk("Array entries: ");
 	for(i = 0; i < array_sz; i++) {
 		INIT_LIST_HEAD(&nr_process[i].list_of_tasks);
+		printk("%d ", array[i]);
 	}
+	printk("\n");
 
    pinthread_callback = &new_process_cb;
 
