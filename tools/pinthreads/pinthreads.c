@@ -151,7 +151,7 @@ void new_process_cb(struct task_struct* p, pinthread_op_t op) {
 		int entry = __get_next_entry(p->pinthread_done ? p->pinthread_data : -1);
 
 		if(!p->pinthread_done || (p->pinthread_done && entry != p->pinthread_data)) {
-			if(mode) {
+			if(mode && !num_considered_cpus) {
 				// Node mode
 				dstp_p = cpumask_of_node(entry);
 			}
@@ -257,7 +257,7 @@ static int rotate_tasks(void) {
 			p->pinthread_data = next;
 
 			// Do the actuall pinning
-			if(mode) {
+			if(mode && !num_considered_cpus) {
 				// Node mode
 				dstp_p = cpumask_of_node(array[next]);
 			}
@@ -343,12 +343,12 @@ static int __init pinthreads_init_module(void) {
    }
 
    array = kmalloc(array_sz * sizeof(int), GFP_KERNEL);
-   nr_process = kmalloc(array_sz * sizeof(struct entry_t), GFP_KERNEL | __GFP_ZERO);
+   nr_process = kmalloc(num_possible_cpus() * sizeof(struct entry_t), GFP_KERNEL | __GFP_ZERO);
 
    if(!array || !nr_process) {
       printk(KERN_CRIT "Cannot allocate memory!\n");
       return -1;
-   }
+	}
 
 	if(num_considered_cpus) {
 		for(i = 0; i < num_considered_cpus; i++) {
@@ -402,9 +402,12 @@ static int __init pinthreads_init_module(void) {
       }
    }
 
+	for(i = 0; i < num_possible_cpus(); i++) {
+		INIT_LIST_HEAD(&nr_process[i].list_of_tasks);
+	}
+
 	printk("Array entries: ");
 	for(i = 0; i < array_sz; i++) {
-		INIT_LIST_HEAD(&nr_process[i].list_of_tasks);
 		printk("%d ", array[i]);
 	}
 	printk("\n");
