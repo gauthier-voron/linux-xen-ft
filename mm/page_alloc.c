@@ -59,10 +59,14 @@
 #include <linux/migrate.h>
 #include <linux/page-debug-flags.h>
 #include <linux/sched/rt.h>
+#include <xen/interface/memory.h>
 
 #include <asm/tlbflush.h>
 #include <asm/div64.h>
+#include <asm/hypervisor.h>
+#include <asm/xen/hypercall.h>
 #include "internal.h"
+
 
 #ifdef CONFIG_USE_PERCPU_NUMA_NODE_ID
 DEFINE_PER_CPU(int, numa_node);
@@ -505,6 +509,93 @@ static inline int page_is_buddy(struct page *page, struct page *buddy,
 	return 0;
 }
 
+
+
+#ifdef CONFIG_XEN
+struct xen_page_mapping_queue
+{
+	uint64_t size;
+	uint64_t pfns[XENMEM_BATCH_MAXSIZE];
+	uint32_t orders[XENMEM_BATCH_MAXSIZE];
+	uint32_t cpus[XENMEM_BATCH_MAXSIZE];
+	uint32_t operations[XENMEM_BATCH_MAXSIZE];
+	uint64_t tickets[XENMEM_BATCH_MAXSIZE];
+};
+
+static struct xen_page_mapping_queue  __queue;
+
+static DEFINE_SPINLOCK(__queue_lock);
+
+static atomic64_t __queue_clock;
+
+
+static void __xen_mapping_hypercall(void)
+{
+	struct xen_page_mapping xarg;
+
+	xarg.size = __queue.size;
+	xarg.pfns = __queue.pfns;
+	xarg.orders = __queue.orders;
+	xarg.cpus = __queue.cpus;
+	xarg.operations = __queue.operations;
+	xarg.tickets = __queue.tickets;
+
+	HYPERVISOR_memory_op(XENMEM_page_mapping, &xarg);
+
+	__queue.size = 0;
+}
+
+static void __hypervisor_unmap_page(struct page *page, unsigned int order)
+{
+	uint64_t xindex;
+
+	if (x86_hyper == &x86_hyper_xen_hvm) {
+		spin_lock(&__queue_lock);
+
+		xindex = __queue.size++;
+		__queue.pfns[xindex] = page_to_pfn(page);
+		__queue.orders[xindex] = order;
+		__queue.cpus[xindex] = smp_processor_id();
+		__queue.operations[xindex] = XENMEM_page_mapping_unmap;
+		__queue.tickets[xindex] =
+			atomic64_inc_return(&__queue_clock);
+
+		if (__queue.size >= XENMEM_BATCH_SENDSIZE)
+			__xen_mapping_hypercall();
+
+		spin_unlock(&__queue_lock);
+	}
+}
+
+static void __hypervisor_remap_page(struct page *page, unsigned int order)
+{
+	uint64_t xindex;
+
+	if (x86_hyper == &x86_hyper_xen_hvm) {
+		spin_lock(&__queue_lock);
+
+		xindex = __queue.size++;
+		__queue.pfns[xindex] = page_to_pfn(page);
+		__queue.orders[xindex] = order;
+		__queue.cpus[xindex] = smp_processor_id();
+		__queue.operations[xindex] = XENMEM_page_mapping_remap;
+		__queue.tickets[xindex] =
+			atomic64_inc_return(&__queue_clock);
+
+		if (__queue.size >= XENMEM_BATCH_SENDSIZE)
+			__xen_mapping_hypercall();
+
+		spin_unlock(&__queue_lock);
+	}
+}
+#else
+
+#define __hypervisor_unmap_page(page, order) {}
+#define __hypervisor_remap_page(page, order) {}
+
+#endif
+
+
 /*
  * Freeing function for a buddy system allocator.
  *
@@ -533,9 +624,11 @@ static inline void __free_one_page(struct page *page,
 		struct zone *zone, unsigned int order,
 		int migratetype)
 {
+	unsigned int callorder = order;
 	unsigned long page_idx;
 	unsigned long combined_idx;
 	unsigned long uninitialized_var(buddy_idx);
+	struct page *callpage = page;
 	struct page *buddy;
 
 	VM_BUG_ON(!zone_is_initialized(zone));
@@ -600,6 +693,7 @@ static inline void __free_one_page(struct page *page,
 
 	list_add(&page->lru, &zone->free_area[order].free_list[migratetype]);
 out:
+	__hypervisor_unmap_page(callpage, callorder);
 	zone->free_area[order].nr_free++;
 }
 
@@ -1115,6 +1209,8 @@ retry_reserve:
 		}
 	}
 
+	__hypervisor_remap_page(page, order);
+
 	trace_mm_page_alloc_zone_locked(page, order, migratetype);
 	return page;
 }
@@ -1418,6 +1514,8 @@ static int __isolate_free_page(struct page *page, unsigned int order)
 		__mod_zone_freepage_state(zone, -(1UL << order), mt);
 	}
 
+	__hypervisor_remap_page(page, order);
+
 	/* Remove page from free list */
 	list_del(&page->lru);
 	zone->free_area[order].nr_free--;
@@ -1531,6 +1629,7 @@ again:
 	VM_BUG_ON(bad_range(zone, page));
 	if (prep_new_page(page, order, gfp_flags))
 		goto again;
+
 	return page;
 
 failed:
