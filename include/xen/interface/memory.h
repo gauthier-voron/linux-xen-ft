@@ -274,7 +274,6 @@ DEFINE_GUEST_HANDLE_STRUCT(xen_remove_from_physmap);
 struct xen_page_mapping {
     uint64_t size;
     GUEST_HANDLE(uint64_t) pfns;
-    GUEST_HANDLE(uint32_t) orders;
     GUEST_HANDLE(uint32_t) cpus;
     GUEST_HANDLE(uint32_t) operations;
     GUEST_HANDLE(uint64_t) tickets;

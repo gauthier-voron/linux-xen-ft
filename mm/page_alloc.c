@@ -512,80 +512,112 @@ static inline int page_is_buddy(struct page *page, struct page *buddy,
 
 
 #ifdef CONFIG_XEN
+
+#define XENMEM_BATCH_SPLITORDER   1
+#define XENMEM_BATCH_SPLITSIZE   (1ul << XENMEM_BATCH_SPLITORDER)
+
+
 struct xen_page_mapping_queue
 {
 	uint64_t size;
 	uint64_t pfns[XENMEM_BATCH_MAXSIZE];
-	uint32_t orders[XENMEM_BATCH_MAXSIZE];
 	uint32_t cpus[XENMEM_BATCH_MAXSIZE];
 	uint32_t operations[XENMEM_BATCH_MAXSIZE];
 	uint64_t tickets[XENMEM_BATCH_MAXSIZE];
 };
 
-static struct xen_page_mapping_queue  __queue;
+static struct xen_page_mapping_queue __queues[XENMEM_BATCH_SPLITSIZE];
 
 static DEFINE_SPINLOCK(__queue_lock);
 
 static atomic64_t __queue_clock;
 
 
-static void __xen_mapping_hypercall(void)
+static void __xen_mapping_hypercall(struct xen_page_mapping_queue *queue)
 {
 	struct xen_page_mapping xarg;
 
-	xarg.size = __queue.size;
-	xarg.pfns = __queue.pfns;
-	xarg.orders = __queue.orders;
-	xarg.cpus = __queue.cpus;
-	xarg.operations = __queue.operations;
-	xarg.tickets = __queue.tickets;
+	xarg.size = queue->size;
+	xarg.pfns = queue->pfns;
+	xarg.cpus = queue->cpus;
+	xarg.operations = queue->operations;
+	xarg.tickets = queue->tickets;
 
 	HYPERVISOR_memory_op(XENMEM_page_mapping, &xarg);
 
-	__queue.size = 0;
+	queue->size = 0;
 }
+
+
+static inline unsigned int __pfn_split_index(uint64_t pfn)
+{
+	return (pfn & ((1ul << XENMEM_BATCH_SPLITORDER) - 1));
+}
+
 
 static void __hypervisor_unmap_page(struct page *page, unsigned int order)
 {
+	struct xen_page_mapping_queue *queue;
+	unsigned int split_index;
+	unsigned long max, i;
 	uint64_t xindex;
+	uint64_t pfn;
 
 	if (x86_hyper == &x86_hyper_xen_hvm) {
-		spin_lock(&__queue_lock);
+		pfn = page_to_pfn(page);
+		max = 1ul << order;
 
-		xindex = __queue.size++;
-		__queue.pfns[xindex] = page_to_pfn(page);
-		__queue.orders[xindex] = order;
-		__queue.cpus[xindex] = smp_processor_id();
-		__queue.operations[xindex] = XENMEM_page_mapping_unmap;
-		__queue.tickets[xindex] =
-			atomic64_inc_return(&__queue_clock);
+		for (i = 0; i < max; i++) {
+			split_index = __pfn_split_index(pfn + i);
+			queue = &__queues[split_index];
 
-		if (__queue.size >= XENMEM_BATCH_SENDSIZE)
-			__xen_mapping_hypercall();
+			spin_lock(&__queue_lock);
 
-		spin_unlock(&__queue_lock);
+			xindex = queue->size++;
+			queue->pfns[xindex] = pfn + i;
+			queue->cpus[xindex] = smp_processor_id();
+			queue->operations[xindex] = XENMEM_page_mapping_unmap;
+			queue->tickets[xindex] =
+				atomic64_inc_return(&__queue_clock);
+
+			if (queue->size >= XENMEM_BATCH_SENDSIZE)
+				__xen_mapping_hypercall(queue);
+
+			spin_unlock(&__queue_lock);
+		}
 	}
 }
 
 static void __hypervisor_remap_page(struct page *page, unsigned int order)
 {
+	struct xen_page_mapping_queue *queue;
+	unsigned int split_index;
+	unsigned long max, i;
 	uint64_t xindex;
+	uint64_t pfn;
 
 	if (x86_hyper == &x86_hyper_xen_hvm) {
-		spin_lock(&__queue_lock);
+		pfn = page_to_pfn(page);
+		max = 1ul << order;
 
-		xindex = __queue.size++;
-		__queue.pfns[xindex] = page_to_pfn(page);
-		__queue.orders[xindex] = order;
-		__queue.cpus[xindex] = smp_processor_id();
-		__queue.operations[xindex] = XENMEM_page_mapping_remap;
-		__queue.tickets[xindex] =
-			atomic64_inc_return(&__queue_clock);
+		for (i = 0; i < max; i++) {
+			split_index = __pfn_split_index(pfn + i);
+			queue = &__queues[split_index];
 
-		if (__queue.size >= XENMEM_BATCH_SENDSIZE)
-			__xen_mapping_hypercall();
+			spin_lock(&__queue_lock);
 
-		spin_unlock(&__queue_lock);
+			xindex = queue->size++;
+			queue->pfns[xindex] = pfn + i;
+			queue->cpus[xindex] = smp_processor_id();
+			queue->operations[xindex] = XENMEM_page_mapping_remap;
+			queue->tickets[xindex] =
+				atomic64_inc_return(&__queue_clock);
+
+			if (queue->size >= XENMEM_BATCH_SENDSIZE)
+				__xen_mapping_hypercall(queue);
+
+			spin_unlock(&__queue_lock);
+		}
 	}
 }
 #else
