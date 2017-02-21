@@ -2401,6 +2401,8 @@ void *kmem_cache_alloc(struct kmem_cache *s, gfp_t gfpflags)
 
 	trace_kmem_cache_alloc(_RET_IP_, ret, s->object_size, s->size, gfpflags);
 
+	if (ret != NULL)
+		*((char *) ret) = 0;
 	return ret;
 }
 EXPORT_SYMBOL(kmem_cache_alloc);
